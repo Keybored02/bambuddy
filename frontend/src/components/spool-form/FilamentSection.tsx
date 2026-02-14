@@ -18,11 +18,14 @@ export function FilamentSection({
 }: FilamentSectionProps) {
   const { t } = useTranslation();
   const [presetDropdownOpen, setPresetDropdownOpen] = useState(false);
+  const [materialDropdownOpen, setMaterialDropdownOpen] = useState(false);
   const [brandDropdownOpen, setBrandDropdownOpen] = useState(false);
   const [subtypeDropdownOpen, setSubtypeDropdownOpen] = useState(false);
+  const [materialSearch, setMaterialSearch] = useState('');
   const [brandSearch, setBrandSearch] = useState('');
   const [subtypeSearch, setSubtypeSearch] = useState('');
   const presetRef = useRef<HTMLDivElement>(null);
+  const materialRef = useRef<HTMLDivElement>(null);
   const brandRef = useRef<HTMLDivElement>(null);
   const subtypeRef = useRef<HTMLDivElement>(null);
 
@@ -31,6 +34,9 @@ export function FilamentSection({
     const handleClick = (e: MouseEvent) => {
       if (presetRef.current && !presetRef.current.contains(e.target as Node)) {
         setPresetDropdownOpen(false);
+      }
+      if (materialRef.current && !materialRef.current.contains(e.target as Node)) {
+        setMaterialDropdownOpen(false);
       }
       if (brandRef.current && !brandRef.current.contains(e.target as Node)) {
         setBrandDropdownOpen(false);
@@ -52,6 +58,12 @@ export function FilamentSection({
       o.code.toLowerCase().includes(search),
     );
   }, [filamentOptions, presetInputValue]);
+
+  const filteredMaterials = useMemo(() => {
+    if (!materialSearch) return MATERIALS;
+    const search = materialSearch.toLowerCase();
+    return MATERIALS.filter(m => m.toLowerCase().includes(search));
+  }, [materialSearch]);
 
   // Filtered brands
   const filteredBrands = useMemo(() => {
@@ -147,16 +159,47 @@ export function FilamentSection({
       {/* Material */}
       <div>
         <label className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.material')} *</label>
-        <select
-          value={formData.material}
-          onChange={(e) => updateField('material', e.target.value)}
-          className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:outline-none focus:border-bambu-green"
-        >
-          <option value="">{t('inventory.selectMaterial')}</option>
-          {MATERIALS.map((m) => (
-            <option key={m} value={m}>{m}</option>
-          ))}
-        </select>
+        <div className="relative" ref={materialRef}>
+          <input
+            type="text"
+            className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm placeholder:text-bambu-gray/50 focus:outline-none focus:border-bambu-green"
+            placeholder={t('inventory.selectMaterial')}
+            value={materialDropdownOpen ? materialSearch : formData.material}
+            onChange={(e) => {
+              setMaterialSearch(e.target.value);
+              setMaterialDropdownOpen(true);
+            }}
+            onFocus={() => {
+              setMaterialDropdownOpen(true);
+              setMaterialSearch('');
+            }}
+          />
+          <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-bambu-gray/50 pointer-events-none" />
+          {materialDropdownOpen && (
+            <div className="absolute z-50 w-full mt-1 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg shadow-lg max-h-48 overflow-y-auto">
+              {filteredMaterials.length === 0 ? (
+                <div className="px-3 py-2 text-sm text-bambu-gray">{t('inventory.noResults')}</div>
+              ) : (
+                filteredMaterials.map(material => (
+                  <button
+                    key={material}
+                    type="button"
+                    className={`w-full px-3 py-2 text-left text-sm hover:bg-bambu-dark-tertiary ${
+                      formData.material === material ? 'bg-bambu-green/10 text-bambu-green' : 'text-white'
+                    }`}
+                    onClick={() => {
+                      updateField('material', material);
+                      setMaterialDropdownOpen(false);
+                      setMaterialSearch('');
+                    }}
+                  >
+                    {material}
+                  </button>
+                ))
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Brand (dropdown with search) */}
