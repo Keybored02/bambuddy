@@ -2891,6 +2891,7 @@ function PrinterCard({
                                               material: assignment.spool.material,
                                               brand: assignment.spool.brand,
                                               color_name: assignment.spool.color_name,
+                                              remainingWeightGrams: Math.max(0, Math.round(assignment.spool.label_weight - assignment.spool.weight_used)),
                                             } : null,
                                             onAssignSpool: filamentData.vendor !== 'Bambu Lab' ? () => setAssignSpoolModal({
                                               printerId: printer.id,
@@ -3125,6 +3126,7 @@ function PrinterCard({
                                           material: assignment.spool.material,
                                           brand: assignment.spool.brand,
                                           color_name: assignment.spool.color_name,
+                                          remainingWeightGrams: Math.max(0, Math.round(assignment.spool.label_weight - assignment.spool.weight_used)),
                                         } : null,
                                         onAssignSpool: filamentData.vendor !== 'Bambu Lab' ? () => setAssignSpoolModal({
                                           printerId: printer.id,
@@ -3304,6 +3306,7 @@ function PrinterCard({
                                     material: assignment.spool.material,
                                     brand: assignment.spool.brand,
                                     color_name: assignment.spool.color_name,
+                                    remainingWeightGrams: Math.max(0, Math.round(assignment.spool.label_weight - assignment.spool.weight_used)),
                                   } : null,
                                   onAssignSpool: extFilamentData.vendor !== 'Bambu Lab' ? () => setAssignSpoolModal({
                                     printerId: printer.id,

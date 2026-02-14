@@ -2311,7 +2311,7 @@ export default {
     kProfiles: 'K-Profiles',
     addKProfile: 'Aggiungi K-Profile',
     assignSpool: 'Assegna Bobina',
-    unassignSpool: 'Deassegna',
+    unassignSpool: 'Scollega',
     assignSuccess: 'Bobina assegnata e slot AMS configurato',
     assignFailed: 'Assegnazione bobina fallita',
     assignMismatchTitle: 'Materiale non corrispondente',
@@ -2364,7 +2364,7 @@ export default {
     externalSpool: 'Bobina esterna',
     profile: 'Profilo',
     kFactor: 'K Factor',
-    fill: 'Riempi',
+    fill: 'Residuo',
     configure: 'Configura',
   },
 
