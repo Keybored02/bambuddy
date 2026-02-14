@@ -87,6 +87,7 @@ async def init_db():
         maintenance,
         notification,
         notification_template,
+        nozzle_history,
         orca_base_cache,
         pending_upload,
         print_queue,

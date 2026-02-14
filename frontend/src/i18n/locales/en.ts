@@ -108,6 +108,11 @@ export default {
     duplicate: 'Duplicate',
     left: 'Left',
     right: 'Right',
+    history: 'History',
+    current: 'Current',
+    average: 'Average',
+    min: 'Min',
+    max: 'Max',
   },
 
   // Printers page
@@ -3227,6 +3232,16 @@ export default {
     builtin: 'Built-in',
     settingsSentToPrinter: 'Settings sent to printer',
     filamentProfile: 'Filament Profile',
+  },
+
+  // AMS History
+  amsHistory: {
+    recordingInfo: 'Data is recorded every 5 minutes while the printer is connected',
+  },
+
+  // Nozzle Temperature History
+  nozzleHistory: {
+    recordingInfo: 'Data is recorded when temperature updates are received',
   },
 
   // GitHub Backup Settings

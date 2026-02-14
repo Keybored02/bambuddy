@@ -115,6 +115,8 @@ class Permission(StrEnum):
 
     # AMS History
     AMS_HISTORY_READ = "ams_history:read"
+    # Nozzle Temperature History
+    NOZZLE_HISTORY_READ = "nozzle_history:read"
 
     # Stats/Metrics
     STATS_READ = "stats:read"
@@ -258,6 +260,7 @@ PERMISSION_CATEGORIES = {
     ],
     "Stats & History": [
         Permission.AMS_HISTORY_READ,
+        Permission.NOZZLE_HISTORY_READ,
         Permission.STATS_READ,
     ],
     "System": [
@@ -388,6 +391,7 @@ DEFAULT_GROUPS = {
             Permission.FIRMWARE_READ.value,
             # Stats & History
             Permission.AMS_HISTORY_READ.value,
+            Permission.NOZZLE_HISTORY_READ.value,
             Permission.STATS_READ.value,
             Permission.SYSTEM_READ.value,
             # Settings - read only
@@ -416,6 +420,7 @@ DEFAULT_GROUPS = {
             Permission.NOTIFICATION_TEMPLATES_READ.value,
             Permission.EXTERNAL_LINKS_READ.value,
             Permission.FIRMWARE_READ.value,
+            Permission.NOZZLE_HISTORY_READ.value,
             Permission.AMS_HISTORY_READ.value,
             Permission.STATS_READ.value,
             Permission.SYSTEM_READ.value,

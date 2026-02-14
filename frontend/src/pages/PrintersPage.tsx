@@ -57,6 +57,7 @@ import { MQTTDebugModal } from '../components/MQTTDebugModal';
 import { HMSErrorModal, filterKnownHMSErrors } from '../components/HMSErrorModal';
 import { PrinterQueueWidget } from '../components/PrinterQueueWidget';
 import { AMSHistoryModal } from '../components/AMSHistoryModal';
+import { NozzleTempHistoryModal } from '../components/NozzleTempHistoryModal';
 import { FilamentHoverCard, EmptySlotHoverCard } from '../components/FilamentHoverCard';
 import { LinkSpoolModal } from '../components/LinkSpoolModal';
 import { AssignSpoolModal } from '../components/AssignSpoolModal';
@@ -1448,6 +1449,7 @@ function PrinterCard({
     amsLabel: string;
     mode: 'humidity' | 'temperature';
   } | null>(null);
+  const [showNozzleTempHistory, setShowNozzleTempHistory] = useState(false);
   const [linkSpoolModal, setLinkSpoolModal] = useState<{
     tagUid: string;
     trayUuid: string;
@@ -2467,6 +2469,7 @@ function PrinterCard({
               const bedHeating = status.temperatures.bed_heating || false;
               const chamberHeating = status.temperatures.chamber_heating || false;
               const isDualNozzle = printer.nozzle_count === 2 || status.temperatures.nozzle_2 !== undefined;
+              const canShowNozzleHistory = isDualNozzle;
               // active_extruder: 0=right, 1=left
               const activeNozzle = status.active_extruder === 1 ? 'L' : 'R';
               // Extended nozzle data from nozzle_rack (H2 series: wear, serial, max_temp, etc.)
@@ -2479,7 +2482,14 @@ function PrinterCard({
               return (
                 <div className="flex items-stretch gap-1.5 flex-wrap">
                   {/* Nozzle temp - combined for dual nozzle */}
-                  <div className="text-center px-2 py-1.5 bg-bambu-dark rounded-lg flex-1 flex flex-col justify-center items-center">
+                  <div
+                    className={`text-center px-2 py-1.5 bg-bambu-dark rounded-lg flex-1 flex flex-col justify-center items-center ${
+                      canShowNozzleHistory ? 'cursor-pointer hover:bg-bambu-dark-tertiary/40' : ''
+                    }`}
+                    onClick={() => {
+                      if (canShowNozzleHistory) setShowNozzleTempHistory(true);
+                    }}
+                  >
                     <HeaterThermometer className="w-3.5 h-3.5 mb-0.5" color="text-orange-400" isHeating={nozzleHeating} />
                     {status.temperatures.nozzle_2 !== undefined ? (
                       <>
@@ -3939,6 +3949,16 @@ function PrinterCard({
           amsLabel={amsHistoryModal.amsLabel}
           initialMode={amsHistoryModal.mode}
           thresholds={amsThresholds}
+        />
+      )}
+
+      {/* Nozzle Temperature History Modal */}
+      {showNozzleTempHistory && (
+        <NozzleTempHistoryModal
+          isOpen={showNozzleTempHistory}
+          onClose={() => setShowNozzleTempHistory(false)}
+          printerId={printer.id}
+          printerName={printer.name}
         />
       )}
 

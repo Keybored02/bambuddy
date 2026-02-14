@@ -105,6 +105,11 @@ export default {
     duplicate: 'Duplica',
     left: 'Sinistra',
     right: 'Destra',
+    history: 'Storico',
+    current: 'Corrente',
+    average: 'Media',
+    min: 'Min',
+    max: 'Max',
   },
 
   // Printers page
@@ -2600,6 +2605,16 @@ export default {
       noExport: 'Non hai il permesso di esportare profili',
       noImport: 'Non hai il permesso di importare profili',
     },
+  },
+
+  // AMS History
+  amsHistory: {
+    recordingInfo: 'I dati vengono registrati ogni 5 minuti mentre la stampante e connessa',
+  },
+
+  // Nozzle Temperature History
+  nozzleHistory: {
+    recordingInfo: 'I dati vengono registrati quando arrivano gli aggiornamenti di temperatura',
   },
 
   // Virtual Printer

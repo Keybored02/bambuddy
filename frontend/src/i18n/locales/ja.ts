@@ -105,6 +105,11 @@ export default {
     duplicate: '複製',
     left: '左',
     right: '右',
+    history: '履歴',
+    current: '現在',
+    average: '平均',
+    min: '最小',
+    max: '最大',
     done: '完了',
     saveChanges: '変更を保存',
     turnOn: 'オンにする',
@@ -2938,6 +2943,16 @@ export default {
     builtin: '内蔵',
     settingsSentToPrinter: '設定をプリンターに送信しました',
     filamentProfile: 'フィラメントプロファイル',
+  },
+
+  // AMS History
+  amsHistory: {
+    recordingInfo: 'プリンター接続中は5分毎にデータが記録されます',
+  },
+
+  // Nozzle Temperature History
+  nozzleHistory: {
+    recordingInfo: '温度更新を受信した時にデータが記録されます',
   },
 
   // Email Settings

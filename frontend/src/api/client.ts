@@ -3764,6 +3764,10 @@ export const api = {
   getAMSHistory: (printerId: number, amsId: number, hours = 24) =>
     request<AMSHistoryResponse>(`/ams-history/${printerId}/${amsId}?hours=${hours}`),
 
+  // Nozzle Temperature History
+  getNozzleTempHistory: (printerId: number, hours = 24) =>
+    request<NozzleTempHistoryResponse>(`/nozzle-temp-history/${printerId}?hours=${hours}`),
+
   // System Info
   getSystemInfo: () => request<SystemInfo>('/system/info'),
 
@@ -4035,6 +4039,24 @@ export interface AMSHistoryResponse {
   min_temperature: number | null;
   max_temperature: number | null;
   avg_temperature: number | null;
+}
+
+// Nozzle Temperature History types
+export interface NozzleTempHistoryPoint {
+  recorded_at: string;
+  nozzle_left: number | null;
+  nozzle_right: number | null;
+}
+
+export interface NozzleTempHistoryResponse {
+  printer_id: number;
+  data: NozzleTempHistoryPoint[];
+  min_left: number | null;
+  max_left: number | null;
+  avg_left: number | null;
+  min_right: number | null;
+  max_right: number | null;
+  avg_right: number | null;
 }
 
 // System Info types

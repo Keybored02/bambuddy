@@ -192,6 +192,7 @@ from backend.app.api.routes import (
     metrics,
     notification_templates,
     notifications,
+    nozzle_history,
     pending_uploads,
     print_queue,
     printers,
@@ -303,6 +304,9 @@ def register_expected_print(printer_id: int, filename: str, archive_id: int):
 
 _last_status_broadcast: dict[int, str] = {}
 _nozzle_count_updated: set[int] = set()  # Track printers where we've updated nozzle_count
+_last_nozzle_history: dict[int, tuple[float | None, float | None]] = {}
+_last_nozzle_history_cleanup: datetime | None = None
+NOZZLE_HISTORY_RETENTION_DAYS = 7
 
 
 async def on_printer_status_change(printer_id: int, state: PrinterState):
@@ -330,6 +334,39 @@ async def on_printer_status_change(printer_id: int, state: PrinterState):
                 logging.getLogger(__name__).info(
                     f"Auto-detected dual-nozzle printer {printer_id}, updated nozzle_count=2"
                 )
+
+    # Record dual-nozzle temperature history at incoming update rate
+    if "nozzle_2" in temps:
+        left_temp = temps.get("nozzle")
+        right_temp = temps.get("nozzle_2")
+        if left_temp is not None or right_temp is not None:
+            last_temps = _last_nozzle_history.get(printer_id)
+            current_temps = (left_temp, right_temp)
+            if last_temps != current_temps:
+                _last_nozzle_history[printer_id] = current_temps
+                async with async_session() as db:
+                    from backend.app.models.nozzle_history import NozzleTempHistory
+
+                    db.add(
+                        NozzleTempHistory(
+                            printer_id=printer_id,
+                            nozzle_left=left_temp,
+                            nozzle_right=right_temp,
+                            recorded_at=datetime.now(timezone.utc),
+                        )
+                    )
+
+                    global _last_nozzle_history_cleanup
+                    now = datetime.now(timezone.utc)
+                    if (
+                        _last_nozzle_history_cleanup is None
+                        or (now - _last_nozzle_history_cleanup).total_seconds() >= 21600
+                    ):
+                        cutoff = now - timedelta(days=NOZZLE_HISTORY_RETENTION_DAYS)
+                        await db.execute(delete(NozzleTempHistory).where(NozzleTempHistory.recorded_at < cutoff))
+                        _last_nozzle_history_cleanup = now
+
+                    await db.commit()
 
     # Include target temps for heating phase detection
     bed_target = round(temps.get("bed_target", 0))
@@ -2622,6 +2659,12 @@ _ams_cleanup_counter = 0  # Track recordings to trigger periodic cleanup
 _ams_alarm_cooldown: dict[str, datetime] = {}  # Track alarm cooldowns (printer_id:ams_id:type -> last_alarm_time)
 AMS_ALARM_COOLDOWN_MINUTES = 60  # Don't send same alarm more than once per hour
 
+# Nozzle temperature history recording
+_nozzle_history_task: asyncio.Task | None = None
+NOZZLE_HISTORY_INTERVAL = 300  # Record every 5 minutes
+NOZZLE_HISTORY_RETENTION_DAYS = 7  # Keep data for 7 days
+_nozzle_cleanup_counter = 0
+
 
 async def record_ams_history():
     """Background task to record AMS humidity and temperature data."""
@@ -2823,6 +2866,86 @@ def stop_ams_history_recording():
         logging.getLogger(__name__).info("AMS history recording stopped")
 
 
+async def record_nozzle_temp_history():
+    """Background task to record dual-nozzle temperature data."""
+    logger = logging.getLogger(__name__)
+
+    await asyncio.sleep(10)
+
+    while True:
+        try:
+            from backend.app.models.nozzle_history import NozzleTempHistory
+            from backend.app.models.printer import Printer
+
+            async with async_session() as db:
+                result = await db.execute(select(Printer).where(Printer.is_active.is_(True)))
+                printers = result.scalars().all()
+
+                recorded_count = 0
+                for printer in printers:
+                    state = printer_manager.get_status(printer.id)
+                    if not state or not state.connected:
+                        continue
+
+                    temps = state.temperatures or {}
+                    nozzle_left = temps.get("nozzle")
+                    nozzle_right = temps.get("nozzle_2")
+
+                    if nozzle_left is None or nozzle_right is None:
+                        continue
+
+                    history = NozzleTempHistory(
+                        printer_id=printer.id,
+                        nozzle_left=float(nozzle_left),
+                        nozzle_right=float(nozzle_right),
+                    )
+                    db.add(history)
+                    recorded_count += 1
+
+                await db.commit()
+                if recorded_count > 0:
+                    logger.info("Recorded %s nozzle temperature history entries", recorded_count)
+
+                global _nozzle_cleanup_counter
+                _nozzle_cleanup_counter += 1
+                if _nozzle_cleanup_counter >= 288:
+                    _nozzle_cleanup_counter = 0
+                    cutoff = datetime.now() - timedelta(days=NOZZLE_HISTORY_RETENTION_DAYS)
+                    result = await db.execute(delete(NozzleTempHistory).where(NozzleTempHistory.recorded_at < cutoff))
+                    await db.commit()
+                    if result.rowcount > 0:
+                        logger.info(
+                            "Cleaned up %s old nozzle temperature history entries (older than %s days)",
+                            result.rowcount,
+                            NOZZLE_HISTORY_RETENTION_DAYS,
+                        )
+
+            await asyncio.sleep(NOZZLE_HISTORY_INTERVAL)
+
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.warning("Nozzle temperature history recording failed: %s", e)
+            await asyncio.sleep(60)
+
+
+def start_nozzle_history_recording():
+    """Start the nozzle temperature history recording background task."""
+    global _nozzle_history_task
+    if _nozzle_history_task is None:
+        _nozzle_history_task = asyncio.create_task(record_nozzle_temp_history())
+        logging.getLogger(__name__).info("Nozzle temperature history recording started")
+
+
+def stop_nozzle_history_recording():
+    """Stop the nozzle temperature history recording background task."""
+    global _nozzle_history_task
+    if _nozzle_history_task:
+        _nozzle_history_task.cancel()
+        _nozzle_history_task = None
+        logging.getLogger(__name__).info("Nozzle temperature history recording stopped")
+
+
 # Printer runtime tracking
 _runtime_tracking_task: asyncio.Task | None = None
 RUNTIME_TRACKING_INTERVAL = 30  # Update every 30 seconds
@@ -3018,6 +3141,9 @@ async def lifespan(app: FastAPI):
     # Start AMS history recording
     start_ams_history_recording()
 
+    # Start nozzle temperature history recording
+    start_nozzle_history_recording()
+
     # Start printer runtime tracking
     start_runtime_tracking()
 
@@ -3079,6 +3205,7 @@ async def lifespan(app: FastAPI):
     notification_service.stop_digest_scheduler()
     github_backup_service.stop_scheduler()
     stop_ams_history_recording()
+    stop_nozzle_history_recording()
     stop_runtime_tracking()
     printer_manager.disconnect_all()
     await close_spoolman_client()
@@ -3269,6 +3396,7 @@ app.include_router(library.router, prefix=app_settings.api_prefix)
 app.include_router(api_keys.router, prefix=app_settings.api_prefix)
 app.include_router(webhook.router, prefix=app_settings.api_prefix)
 app.include_router(ams_history.router, prefix=app_settings.api_prefix)
+app.include_router(nozzle_history.router, prefix=app_settings.api_prefix)
 app.include_router(system.router, prefix=app_settings.api_prefix)
 app.include_router(support.router, prefix=app_settings.api_prefix)
 app.include_router(websocket.router, prefix=app_settings.api_prefix)
