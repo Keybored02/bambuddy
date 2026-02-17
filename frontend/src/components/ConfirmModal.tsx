@@ -11,6 +11,7 @@ interface ConfirmModalProps {
   cancelText?: string;
   cancelVariant?: 'primary' | 'secondary' | 'danger' | 'ghost';
   cardClassName?: string;
+  confirmClassName?: string;
   variant?: 'danger' | 'warning' | 'default';
   isLoading?: boolean;
   loadingText?: string;
@@ -25,6 +26,7 @@ export function ConfirmModal({
   cancelText,
   cancelVariant,
   cardClassName,
+  confirmClassName,
   variant = 'default',
   isLoading = false,
   loadingText,
@@ -91,7 +93,7 @@ export function ConfirmModal({
             </Button>
             <Button
               onClick={onConfirm}
-              className={`flex-1 ${styles.button}`}
+              className={`flex-1 ${styles.button}${confirmClassName ? ` ${confirmClassName}` : ''}`}
               disabled={isLoading}
             >
               {isLoading ? (
