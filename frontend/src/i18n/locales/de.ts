@@ -1207,6 +1207,8 @@ export default {
     // Filament Tracking Mode
     filamentTracking: 'Filament-Verfolgung',
     filamentTrackingDesc: 'Wählen Sie, wie Sie Ihre Filamentspulen verfolgen möchten. Sie können das integrierte Inventar oder einen externen Spoolman-Server verwenden.',
+    disableFilamentWarnings: 'Filament-Warnungen deaktivieren',
+    disableFilamentWarningsDesc: 'Keine Warnungen über unzureichendes Filament beim Drucken oder Einreihen anzeigen',
     trackingModeBuiltIn: 'Integriertes Inventar',
     trackingModeBuiltInDesc: 'RFID-Erkennung und Verbrauchserfassung inklusive',
     trackingModeSpoolmanDesc: 'Externer Filament-Management-Server',
@@ -2712,6 +2714,10 @@ export default {
     rightNozzle: 'R',
     leftNozzleTooltip: 'Linke Düse',
     rightNozzleTooltip: 'Rechte Düse',
+    insufficientFilamentTitle: 'Nicht genug Filament',
+    insufficientFilamentMessage: 'Einige zugewiesene Spulen haben weniger Filament als dieser Druck benoetigt:',
+    insufficientFilamentLine: '{{printer}} - {{slot}}: benoetigt {{required}}g, verbleibend {{remaining}}g',
+    printAnyway: 'Trotzdem drucken',
   },
 
   // Backup

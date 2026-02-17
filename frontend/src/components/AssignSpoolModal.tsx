@@ -120,8 +120,6 @@ export function AssignSpoolModal({ isOpen, onClose, printerId, amsId, trayId, tr
   const handleConfirmMismatch = () => {
     if (!pendingAssignId) return;
     assignMutation.mutate(pendingAssignId);
-    setShowMismatchConfirm(false);
-    setPendingAssignId(null);
   };
 
   return (
@@ -270,7 +268,6 @@ export function AssignSpoolModal({ isOpen, onClose, printerId, amsId, trayId, tr
             location: trayInfo.location,
           })}
           confirmText={t('inventory.assignMismatchConfirm')}
-          confirmClassName="!text-black"
           variant="warning"
           isLoading={assignMutation.isPending}
           onConfirm={handleConfirmMismatch}

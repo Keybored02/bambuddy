@@ -2426,6 +2426,10 @@ export default {
     rightNozzle: 'R',
     leftNozzleTooltip: 'Ugello sinistro',
     rightNozzleTooltip: 'Ugello destro',
+    insufficientFilamentTitle: 'Filamento insufficiente',
+    insufficientFilamentMessage: 'Alcune bobine assegnate hanno meno filamento rimanente di quanto necessario per questa stampa:',
+    insufficientFilamentLine: '{{printer}} - {{slot}}: necessita di {{required}}g, rimanenti {{remaining}}g',
+    printAnyway: 'Stampa comunque',
   },
 
   // Backup
