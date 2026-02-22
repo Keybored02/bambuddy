@@ -171,8 +171,11 @@ export function AssignSpoolModal({ isOpen, onClose, printerId, amsId, trayId, tr
                         />
                       )}
                       <div className="flex-1 min-w-0">
-                        <p className="text-white font-medium truncate">
-                          {spool.brand ? `${spool.brand} ` : ''}{spool.material}{spool.subtype ? ` ${spool.subtype}` : ''}
+                        <p className="text-white font-medium truncate flex items-center gap-1.5">
+                          <span>
+                            {spool.brand ? `${spool.brand} ` : ''}{spool.material}{spool.subtype ? ` ${spool.subtype}` : ''}
+                          </span>
+                          <span className="text-xs font-medium text-bambu-gray align-middle">#{spool.id}</span>
                         </p>
                         <p className="text-xs text-bambu-gray">
                           {spool.color_name || ''}
