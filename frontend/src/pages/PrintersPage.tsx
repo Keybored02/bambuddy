@@ -3331,6 +3331,7 @@ function PrinterCard({
                                               trayId: slotIdx,
                                               trayInfo: {
                                                 type: filamentData.profile,
+                                                material: tray?.tray_type,
                                                 color: filamentData.colorHex || '',
                                                 location: `${getAmsLabel(ams.id, ams.tray.length)} Slot ${slotIdx + 1}`,
                                               },
@@ -3633,6 +3634,7 @@ function PrinterCard({
                                           trayId: htSlotId,
                                           trayInfo: {
                                             type: filamentData.profile,
+                                            material: tray?.tray_type,
                                             color: filamentData.colorHex || '',
                                             location: getAmsLabel(ams.id, ams.tray.length),
                                           },
@@ -3832,6 +3834,7 @@ function PrinterCard({
                                             trayId: slotTrayId,
                                             trayInfo: {
                                               type: extFilamentData.profile,
+                                              material: extTray.tray_type,
                                               color: extFilamentData.colorHex || '',
                                               location: extLabel || t('printers.external'),
                                             },
