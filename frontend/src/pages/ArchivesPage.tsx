@@ -933,7 +933,7 @@ function ArchiveCard({
                   {currency}{archive.cost.toFixed(2)}
                 </div>
               )}
-              <div className="flex items-center gap-1.5" title={`Energy: ${archive.energy_kwh?.toFixed(3) || 'N/A'} kWh`}>
+              <div className="flex items-center gap-1.5" title={`${t('stats.energyUsed')}: ${archive.energy_kwh?.toFixed(3) || 'N/A'} kWh`}>
                 <Zap className="w-3 h-3" />
                 {currency}{(archive.energy_cost ?? 0).toFixed(2)}
               </div>
