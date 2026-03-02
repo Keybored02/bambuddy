@@ -49,7 +49,6 @@ import {
   User,
   Play,
   ClipboardList,
-  Coins,
   Zap,
 } from 'lucide-react';
 import { api } from '../api/client';
