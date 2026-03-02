@@ -731,10 +731,10 @@ class ArchiveService:
         """Get all content hashes and (print name, hash) pairs that appear more than once.
 
         For hashes: returns all hashes with > 1 archive (true duplicates).
-        For name/hash pairs: returns only pairs that have > 1 archive
-                     (i.e., same file archived multiple times, not different files with same name).
+        For names: returns only print names that have > 1 archive with the SAME hash
+                  (i.e., same file archived multiple times, not different files with same name).
 
-        Returns a tuple of (duplicate_hashes, duplicate_name_hash_pairs).
+        Returns a tuple of (duplicate_hashes, duplicate_names).
         """
         from sqlalchemy import func
 
