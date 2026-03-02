@@ -2697,8 +2697,7 @@ export function ArchivesPage() {
       const matchesHideFailed = collection === 'failed' || !hideFailed || (a.status !== 'failed' && a.status !== 'aborted');
 
       // Hide duplicates filter (don't apply when viewing duplicates collection)
-      const matchesHideDuplicates =
-        collection === 'duplicates' || !hideDuplicates || a.duplicate_count === 0 || a.duplicate_sequence === 0;
+      const matchesHideDuplicates = collection === 'duplicates' || !hideDuplicates || a.duplicate_count === 0;
 
       // Tag filter
       const archiveTags = a.tags?.split(',').map(t => t.trim()) || [];
@@ -3189,10 +3188,10 @@ export function ArchivesPage() {
                   ? 'bg-purple-500/20 border-purple-500 text-purple-400'
                   : 'bg-bambu-dark border-bambu-dark-tertiary text-bambu-gray hover:text-white'
               }`}
-              title={t('archives.hideDuplicates')}
+              title={hideDuplicates ? 'Show Duplicates' : 'Hide Duplicates'}
             >
               <Copy className="w-4 h-4" />
-              <span className="text-sm hidden md:inline">{t('archives.hideDuplicates')}</span>
+              <span className="text-sm hidden md:inline">Hide Duplicates</span>
             </button>
             {uniqueTags.length > 0 && (
               <div className="flex items-center gap-2 flex-shrink-0">
