@@ -148,7 +148,7 @@ async def list_archives(
     # Get sets of duplicate hashes and duplicate (name, hash) pairs (efficient single queries)
     duplicate_hashes, duplicate_name_hash_pairs = await service.get_duplicate_hashes_and_names()
 
-    # Build response with duplicate sequence and original archive ID pre-computed
+    # Mark archives that have duplicates (by hash or exact name/hash pair)
     result = []
     for a in archives:
         has_hash_dup = a.content_hash in duplicate_hashes if a.content_hash else False
