@@ -523,7 +523,6 @@ export default {
     showFailedPrints: 'Mostrar impressões falhas',
     hideFailedPrints: 'Ocultar impressões falhas',
     hideDuplicates: 'Ocultar duplicados',
-    viewOriginalPrint: 'Clique para visualizar a impressão original (#{{id}})',
     printTime: 'Tempo de impressão',
     filamentUsed: 'Filamento usado',
     cost: 'Custo',
