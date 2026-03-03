@@ -663,7 +663,7 @@ async def get_storage_usage(
 @router.post("/delete-storage-items", response_model=DeleteStorageItemResponse)
 async def delete_storage_items(
     request: DeleteStorageItemRequest,
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.SYSTEM_WRITE),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
 ):
     """
     Delete selected storage items.
