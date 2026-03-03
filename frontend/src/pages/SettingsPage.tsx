@@ -135,6 +135,7 @@ export function SettingsPage() {
   const [storageUsageRefreshing, setStorageUsageRefreshing] = useState(false);
   const [showStorageDetailsModal, setShowStorageDetailsModal] = useState(false);
   const [selectedStorageItems, setSelectedStorageItems] = useState<Set<string>>(new Set());
+  const [showDeleteStorageConfirm, setShowDeleteStorageConfirm] = useState(false);
 
   // User management state
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
@@ -682,6 +683,31 @@ export function SettingsPage() {
     },
     onError: (error: Error) => {
       showToast(`Failed to update printer: ${error.message}`, 'error');
+    },
+  });
+
+  const deleteStorageMutation = useMutation({
+    mutationFn: (data: { category_keys: string[]; other_items: { bucket: string; kind: string }[] }) =>
+      api.deleteStorageItems(data),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ['storage-usage'] });
+      if (result.success) {
+        showToast(result.message, 'success');
+      } else {
+        showToast(
+          `${result.message}. ${result.errors.length > 0 ? 'Check console for details.' : ''}`,
+          'warning'
+        );
+        if (result.errors.length > 0) {
+          console.error('Storage deletion errors:', result.errors);
+        }
+      }
+      setShowStorageDetailsModal(false);
+      setSelectedStorageItems(new Set());
+      setShowDeleteStorageConfirm(false);
+    },
+    onError: (error: Error) => {
+      showToast(`Failed to delete storage items: ${error.message}`, 'error');
     },
   });
 
@@ -4563,9 +4589,111 @@ export function SettingsPage() {
               <Button
                 variant="primary"
                 disabled={selectedStorageItems.size === 0}
+                onClick={() => setShowDeleteStorageConfirm(true)}
               >
                 <Trash2 className="w-4 h-4" />
                 Delete Selected ({selectedStorageItems.size})
+              </Button>
+            </div>
+          </Card>
+        </div>
+      )}
+
+      {/* Delete Storage Confirmation Modal */}
+      {showDeleteStorageConfirm && storageUsage && (
+        <div
+          className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowDeleteStorageConfirm(false)}
+        >
+          <Card
+            className="w-full max-w-md"
+            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+          >
+            <CardHeader>
+              <div className="flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-500" />
+                <h2 className="text-lg font-semibold text-white">Confirm Deletion</h2>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-bambu-gray">
+                You are about to permanently delete <span className="text-white font-semibold">{selectedStorageItems.size}</span> storage item{selectedStorageItems.size !== 1 ? 's' : ''}:
+              </p>
+              <div className="bg-bambu-dark-tertiary rounded-lg p-3 max-h-48 overflow-y-auto">
+                <ul className="space-y-2 text-sm">
+                  {Array.from(selectedStorageItems).map((itemKey) => {
+                    // Parse the item key to display a friendly name
+                    if (itemKey.startsWith('category-')) {
+                      const categoryKey = itemKey.replace('category-', '');
+                      const category = storageUsage.categories.find(c => c.key === categoryKey);
+                      return (
+                        <li key={itemKey} className="text-bambu-gray">
+                          • <span className="text-white">{category?.label || categoryKey}</span>
+                          {category && <span className="text-bambu-gray ml-1">({category.formatted})</span>}
+                        </li>
+                      );
+                    } else if (itemKey.startsWith('other-')) {
+                      const parts = itemKey.replace('other-', '').split('-');
+                      const bucket = parts.slice(0, -1).join('-');
+                      const item = storageUsage.other_breakdown?.find(i => i.bucket === bucket);
+                      return (
+                        <li key={itemKey} className="text-bambu-gray">
+                          • <span className="text-white">{item?.label || bucket}</span>
+                          {item && <span className="text-bambu-gray ml-1">({item.formatted})</span>}
+                        </li>
+                      );
+                    }
+                    return null;
+                  })}
+                </ul>
+              </div>
+              <p className="text-sm text-amber-400 flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4" />
+                This action cannot be undone!
+              </p>
+            </CardContent>
+            <div className="p-4 border-t border-bambu-dark-tertiary flex gap-2 justify-end">
+              <Button
+                variant="secondary"
+                onClick={() => setShowDeleteStorageConfirm(false)}
+                disabled={deleteStorageMutation.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                onClick={() => {
+                  // Parse selected items into API format
+                  const category_keys: string[] = [];
+                  const other_items: { bucket: string; kind: string }[] = [];
+
+                  selectedStorageItems.forEach((itemKey) => {
+                    if (itemKey.startsWith('category-')) {
+                      const categoryKey = itemKey.replace('category-', '');
+                      category_keys.push(categoryKey);
+                    } else if (itemKey.startsWith('other-')) {
+                      const parts = itemKey.replace('other-', '').split('-');
+                      const kind = parts.pop() || 'data';
+                      const bucket = parts.join('-');
+                      other_items.push({ bucket, kind });
+                    }
+                  });
+
+                  deleteStorageMutation.mutate({ category_keys, other_items });
+                }}
+                disabled={deleteStorageMutation.isPending}
+              >
+                {deleteStorageMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4" />
+                    Delete Permanently
+                  </>
+                )}
               </Button>
             </div>
           </Card>

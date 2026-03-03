@@ -3,6 +3,8 @@
 import asyncio
 import os
 import platform
+import shutil
+import sys
 import time
 from collections.abc import Callable
 from datetime import datetime
@@ -23,6 +25,7 @@ from backend.app.models.printer import Printer
 from backend.app.models.project import Project
 from backend.app.models.smart_plug import SmartPlug
 from backend.app.models.user import User
+from backend.app.schemas.system import DeleteStorageItemRequest, DeleteStorageItemResponse
 from backend.app.services.printer_manager import printer_manager
 
 router = APIRouter(prefix="/system", tags=["system"])
@@ -255,6 +258,123 @@ def _walk_files(roots: list[Path]) -> list[Path]:
     return files
 
 
+def _get_paths_for_category(category_key: str) -> list[Path]:
+    """Get the directory paths that match a storage category."""
+    base_dir = settings.base_dir
+    archive_dir = settings.archive_dir
+    library_dir = archive_dir / "library"
+    virtual_printer_dir = base_dir / "virtual_printer"
+    upload_dir = virtual_printer_dir / "uploads"
+
+    category_paths = {
+        "library_thumbnails": [library_dir / "thumbnails"],
+        "library_files": [library_dir / "files"],
+        "library_other": [library_dir],
+        "archive_timelapses": [archive_dir],  # Will need custom filtering
+        "archive_thumbnails": [archive_dir],  # Will need custom filtering
+        "archive_files": [archive_dir],
+        "virtual_printer_uploads": [upload_dir],
+        "virtual_printer_upload_cache": [upload_dir / "cache"],
+        "virtual_printer_certs": [virtual_printer_dir / "certs"],
+        "virtual_printer_other": [virtual_printer_dir],
+        "downloads": [base_dir / "firmware"],
+        "plate_calibration": [settings.plate_calibration_dir],
+        "logs": [settings.log_dir],
+    }
+
+    return category_paths.get(category_key, [])
+
+
+def _delete_items_in_directory(
+    directory: Path, file_filter: Callable[[Path], bool] | None = None
+) -> tuple[int, int, list[str]]:
+    """
+    Delete items in a directory matching the filter.
+    Returns (deleted_count, deleted_bytes, errors).
+    """
+    deleted_count = 0
+    deleted_bytes = 0
+    errors: list[str] = []
+
+    if not directory.exists():
+        return 0, 0, []
+
+    try:
+        for item in directory.iterdir():
+            try:
+                # Check if item matches filter
+                if file_filter and not file_filter(item):
+                    continue
+
+                size = 0
+                if item.is_dir():
+                    size = get_directory_size(item)
+                    shutil.rmtree(item, ignore_errors=False)
+                elif item.is_file():
+                    size = item.stat().st_size
+                    item.unlink()
+
+                deleted_count += 1
+                deleted_bytes += size
+            except Exception as e:
+                errors.append(f"Failed to delete {item.name}: {str(e)}")
+    except Exception as e:
+        errors.append(f"Failed to access directory {directory}: {str(e)}")
+
+    return deleted_count, deleted_bytes, errors
+
+
+def _delete_storage_category(category_key: str) -> tuple[int, int, list[str]]:
+    """Delete all files in a storage category."""
+    deleted_count = 0
+    deleted_bytes = 0
+    errors: list[str] = []
+
+    paths = _get_paths_for_category(category_key)
+
+    # Special handling for categories with custom filters
+    if category_key == "archive_timelapses":
+        for path in paths:
+            count, size, errs = _delete_items_in_directory(path, lambda p: "timelapse" in p.name.lower())
+            deleted_count += count
+            deleted_bytes += size
+            errors.extend(errs)
+    elif category_key == "archive_thumbnails":
+        for path in paths:
+            count, size, errs = _delete_items_in_directory(path, lambda p: p.name.lower().startswith("thumbnail"))
+            deleted_count += count
+            deleted_bytes += size
+            errors.extend(errs)
+    else:
+        # Delete entire directory contents
+        for path in paths:
+            if path.exists():
+                count, size, errs = _delete_items_in_directory(path)
+                deleted_count += count
+                deleted_bytes += size
+                errors.extend(errs)
+
+    return deleted_count, deleted_bytes, errors
+
+
+def _delete_other_bucket(bucket: str, kind: str) -> tuple[int, int, list[str]]:
+    """Delete files in an 'other' category bucket."""
+    deleted_count = 0
+    deleted_bytes = 0
+    errors: list[str] = []
+
+    base_dir = settings.base_dir
+    target_path = base_dir / bucket
+
+    if target_path.exists():
+        count, size, errs = _delete_items_in_directory(target_path)
+        deleted_count += count
+        deleted_bytes += size
+        errors.extend(errs)
+
+    return deleted_count, deleted_bytes, errors
+
+
 def _scan_storage_usage() -> dict:
     base_dir = settings.base_dir
     rules = _get_storage_rules()
@@ -462,7 +582,6 @@ async def get_system_info(
     uptime_seconds = (datetime.now() - boot_time).total_seconds()
 
     # Python and system info
-    import sys
 
     return {
         "app": {
@@ -539,3 +658,63 @@ async def get_storage_usage(
     """Get storage usage breakdown for Bambuddy data directories."""
     max_age_seconds = max(0, min(max_age_seconds, 3600))
     return await _get_storage_usage_cached(refresh=refresh, max_age_seconds=max_age_seconds)
+
+
+@router.post("/delete-storage-items", response_model=DeleteStorageItemResponse)
+async def delete_storage_items(
+    request: DeleteStorageItemRequest,
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.SYSTEM_WRITE),
+):
+    """
+    Delete selected storage items.
+
+    Supports deleting:
+    - Specific categories (library files, archives, etc.)
+    - Other bucket items (individual data folders)
+    """
+    total_deleted_count = 0
+    total_deleted_bytes = 0
+    all_errors: list[str] = []
+
+    # Delete requested categories
+    for category_key in request.category_keys:
+        try:
+            count, size, errors = await asyncio.to_thread(_delete_storage_category, category_key)
+            total_deleted_count += count
+            total_deleted_bytes += size
+            all_errors.extend(errors)
+        except Exception as e:
+            all_errors.append(f"Error deleting {category_key}: {str(e)}")
+
+    # Delete requested other items
+    for item in request.other_items:
+        bucket = item.get("bucket")
+        kind = item.get("kind", "data")
+        if bucket:
+            try:
+                count, size, errors = await asyncio.to_thread(_delete_other_bucket, bucket, kind)
+                total_deleted_count += count
+                total_deleted_bytes += size
+                all_errors.extend(errors)
+            except Exception as e:
+                all_errors.append(f"Error deleting {bucket}: {str(e)}")
+
+    # Refresh storage cache after deletion
+    global _storage_usage_cache, _storage_usage_cache_ts
+    _storage_usage_cache = None
+    _storage_usage_cache_ts = None
+
+    success = len(all_errors) == 0
+    message = (
+        f"Successfully deleted {total_deleted_count} items ({format_bytes(total_deleted_bytes)})"
+        if success
+        else f"Deleted {total_deleted_count} items with {len(all_errors)} error(s)"
+    )
+
+    return DeleteStorageItemResponse(
+        success=success,
+        deleted_count=total_deleted_count,
+        deleted_bytes=total_deleted_bytes,
+        errors=all_errors,
+        message=message,
+    )

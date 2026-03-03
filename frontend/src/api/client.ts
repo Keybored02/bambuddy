@@ -3937,6 +3937,17 @@ export const api = {
     const query = params.toString();
     return request<StorageUsageResponse>(`/system/storage-usage${query ? `?${query}` : ''}`);
   },
+  deleteStorageItems: (data: { category_keys: string[]; other_items: { bucket: string; kind: string }[] }) =>
+    request<{
+      success: boolean;
+      deleted_count: number;
+      deleted_bytes: number;
+      errors: string[];
+      message: string;
+    }>('/system/delete-storage-items', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 
   // Library (File Manager)
   getLibraryFolders: () => request<LibraryFolderTree[]>('/library/folders'),
