@@ -133,6 +133,8 @@ export function SettingsPage() {
   const [changePasswordData, setChangePasswordData] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
   const [changePasswordLoading, setChangePasswordLoading] = useState(false);
   const [storageUsageRefreshing, setStorageUsageRefreshing] = useState(false);
+  const [showStorageDetailsModal, setShowStorageDetailsModal] = useState(false);
+  const [selectedStorageItems, setSelectedStorageItems] = useState<Set<string>>(new Set());
 
   // User management state
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
@@ -1839,17 +1841,27 @@ export function SettingsPage() {
                       {t('settings.storageUsageDescription', 'Breakdown of data usage by category')}
                     </p>
                   </div>
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    onClick={handleStorageUsageRefresh}
-                    disabled={storageUsageFetching || storageUsageRefreshing}
-                  >
-                    <RefreshCw
-                      className={`w-4 h-4 ${storageUsageFetching || storageUsageRefreshing ? 'animate-spin' : ''}`}
-                    />
-                    {t('common.refresh', 'Refresh')}
-                  </Button>
+                  <div className="flex flex-col gap-2">
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={handleStorageUsageRefresh}
+                      disabled={storageUsageFetching || storageUsageRefreshing}
+                    >
+                      <RefreshCw
+                        className={`w-4 h-4 ${storageUsageFetching || storageUsageRefreshing ? 'animate-spin' : ''}`}
+                      />
+                      {t('common.refresh', 'Refresh')}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setShowStorageDetailsModal(true)}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      Delete
+                    </Button>
+                  </div>
                 </div>
                 <div className="mt-3">
                   {storageUsageLoading ? (
@@ -4391,6 +4403,173 @@ export function SettingsPage() {
           }}
           onCancel={() => setShowDisableAuthConfirm(false)}
         />
+      )}
+
+      {/* Storage Details Management Modal */}
+      {showStorageDetailsModal && storageUsage && (
+        <div
+          className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
+          onClick={() => {
+            setShowStorageDetailsModal(false);
+            setSelectedStorageItems(new Set());
+          }}
+        >
+          <Card
+            className="w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+            onClick={(e: React.MouseEvent) => e.stopPropagation()}
+          >
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Database className="w-5 h-5 text-bambu-green" />
+                  <h2 className="text-lg font-semibold text-white">Disk Space Management</h2>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowStorageDetailsModal(false);
+                    setSelectedStorageItems(new Set());
+                  }}
+                  className="text-bambu-gray hover:text-white transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </CardHeader>
+            <CardContent className="overflow-y-auto flex-1">
+              <div className="space-y-6">
+                {/* Storage Categories */}
+                <div>
+                  <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+                    Storage Categories
+                    <span className="text-xs text-bambu-gray font-normal">({storageUsage.categories.length})</span>
+                  </h3>
+                  <div className="space-y-2">
+                    {storageUsage.categories.map((category, index) => (
+                      <div
+                        key={category.key}
+                        className="flex items-center gap-3 p-3 rounded-lg bg-bambu-dark-tertiary hover:bg-bambu-dark-secondary transition-colors cursor-pointer"
+                        onClick={() => {
+                          const newSelected = new Set(selectedStorageItems);
+                          if (newSelected.has(`category-${category.key}`))
+                            newSelected.delete(`category-${category.key}`);
+                          else newSelected.add(`category-${category.key}`);
+                          setSelectedStorageItems(newSelected);
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedStorageItems.has(`category-${category.key}`)}
+                          onChange={() => {}}
+                          className="w-4 h-4 rounded cursor-pointer accent-bambu-green"
+                        />
+                        <div
+                          className={`w-3 h-3 rounded-full flex-shrink-0 ${getStorageColor(
+                            category.key,
+                            index
+                          )}`}
+                        />
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm text-white font-medium">{category.label}</div>
+                          <div className="text-xs text-bambu-gray">
+                            {category.formatted} • {category.percent_of_total.toFixed(1)}% of total
+                          </div>
+                        </div>
+                        <div className="text-sm text-white font-semibold flex-shrink-0">
+                          {category.formatted}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Other Breakdown Items */}
+                {storageUsage.other_breakdown && storageUsage.other_breakdown.length > 0 && (
+                  <div className="border-t border-bambu-dark-tertiary pt-6">
+                    <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+                      Other Data
+                      <span className="text-xs text-bambu-gray font-normal">
+                        ({storageUsage.other_breakdown.length})
+                      </span>
+                    </h3>
+                    <div className="space-y-2">
+                      {storageUsage.other_breakdown.map((item) => {
+                        const itemKey = `other-${item.bucket}-${item.kind}`;
+                        return (
+                          <div
+                            key={itemKey}
+                            className="flex items-center gap-3 p-3 rounded-lg bg-bambu-dark-tertiary hover:bg-bambu-dark-secondary transition-colors cursor-pointer"
+                            onClick={() => {
+                              const newSelected = new Set(selectedStorageItems);
+                              if (newSelected.has(itemKey)) newSelected.delete(itemKey);
+                              else newSelected.add(itemKey);
+                              setSelectedStorageItems(newSelected);
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedStorageItems.has(itemKey)}
+                              onChange={() => {}}
+                              className="w-4 h-4 rounded cursor-pointer accent-bambu-green"
+                              disabled={!item.deletable}
+                            />
+                            <div
+                              className={`w-3 h-3 rounded-full flex-shrink-0 ${
+                                item.kind === 'system' ? 'bg-slate-500' : 'bg-bambu-green'
+                              }`}
+                            />
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm text-white font-medium">{item.label}</div>
+                              <div className="flex items-center gap-2 text-xs text-bambu-gray">
+                                <span>
+                                  {item.formatted} • {item.percent_of_total.toFixed(1)}% of total
+                                </span>
+                                <span
+                                  className={`px-2 py-0.5 rounded-full border text-xs ${
+                                    item.kind === 'system'
+                                      ? 'border-slate-500 text-slate-300'
+                                      : 'border-bambu-green text-bambu-green'
+                                  }`}
+                                >
+                                  {item.kind === 'system' ? 'System' : 'Data'}
+                                </span>
+                                {!item.deletable && (
+                                  <span className="px-2 py-0.5 rounded-full border border-amber-500 text-amber-400 text-xs">
+                                    Protected
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-sm text-white font-semibold flex-shrink-0">
+                              {item.formatted}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </CardContent>
+            <div className="p-4 border-t border-bambu-dark-tertiary flex gap-2 justify-end flex-shrink-0">
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  setShowStorageDetailsModal(false);
+                  setSelectedStorageItems(new Set());
+                }}
+              >
+                Close
+              </Button>
+              <Button
+                variant="primary"
+                disabled={selectedStorageItems.size === 0}
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete Selected ({selectedStorageItems.size})
+              </Button>
+            </div>
+          </Card>
+        </div>
       )}
 
       {/* Change Password Modal */}
