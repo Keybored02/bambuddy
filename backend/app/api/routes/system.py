@@ -21,6 +21,7 @@ from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
 from backend.app.models.archive import PrintArchive
 from backend.app.models.filament import Filament
+from backend.app.models.library import LibraryFile
 from backend.app.models.printer import Printer
 from backend.app.models.project import Project
 from backend.app.models.smart_plug import SmartPlug
@@ -375,6 +376,125 @@ def _delete_other_bucket(bucket: str, kind: str) -> tuple[int, int, list[str]]:
     return deleted_count, deleted_bytes, errors
 
 
+def _path_exists(path_str: str | None) -> bool:
+    if not path_str:
+        return False
+    try:
+        return Path(path_str).exists()
+    except OSError:
+        return False
+
+
+def _path_in_scope(path_str: str | None, roots: list[Path]) -> bool:
+    if not path_str:
+        return False
+    path = Path(path_str)
+    for root in roots:
+        try:
+            if _is_under(path, root):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _category_roots_for_db_cleanup(category_keys: set[str]) -> dict[str, list[Path]]:
+    archive_dir = settings.archive_dir
+    library_dir = archive_dir / "library"
+    roots: dict[str, list[Path]] = {
+        "library_files": [],
+        "library_thumbnails": [],
+        "archive_files": [],
+        "archive_thumbnails": [],
+        "archive_timelapses": [],
+    }
+
+    if "library_other" in category_keys:
+        roots["library_files"] = [library_dir]
+        roots["library_thumbnails"] = [library_dir]
+    else:
+        if "library_files" in category_keys:
+            roots["library_files"] = [library_dir / "files"]
+        if "library_thumbnails" in category_keys:
+            roots["library_thumbnails"] = [library_dir / "thumbnails"]
+
+    if "archive_files" in category_keys:
+        roots["archive_files"] = [archive_dir]
+    if "archive_thumbnails" in category_keys:
+        roots["archive_thumbnails"] = [archive_dir]
+    if "archive_timelapses" in category_keys:
+        roots["archive_timelapses"] = [archive_dir]
+
+    return roots
+
+
+async def _cleanup_db_after_storage_delete(db: AsyncSession, category_keys: set[str]) -> tuple[int, int, list[str]]:
+    """Remove or fix DB records whose files were removed from disk."""
+    errors: list[str] = []
+    library_deleted = 0
+    archives_deleted = 0
+
+    if not category_keys:
+        return 0, 0, errors
+
+    roots = _category_roots_for_db_cleanup(category_keys)
+
+    try:
+        library_files = (await db.execute(select(LibraryFile))).scalars().all()
+        for item in library_files:
+            should_delete = False
+            try:
+                if roots["library_files"] and _path_in_scope(item.file_path, roots["library_files"]):
+                    should_delete = not _path_exists(item.file_path)
+
+                if not should_delete and item.thumbnail_path and roots["library_thumbnails"]:
+                    if _path_in_scope(item.thumbnail_path, roots["library_thumbnails"]):
+                        if not _path_exists(item.thumbnail_path):
+                            item.thumbnail_path = None
+
+                if should_delete:
+                    await db.delete(item)
+                    library_deleted += 1
+            except Exception as exc:
+                errors.append(f"Library record cleanup failed for id={item.id}: {exc}")
+    except Exception as exc:
+        errors.append(f"Failed to clean library records: {exc}")
+
+    try:
+        archives = (await db.execute(select(PrintArchive))).scalars().all()
+        for item in archives:
+            should_delete = False
+            try:
+                if roots["archive_files"] and _path_in_scope(item.file_path, roots["archive_files"]):
+                    should_delete = not _path_exists(item.file_path)
+
+                if item.thumbnail_path and roots["archive_thumbnails"]:
+                    if _path_in_scope(item.thumbnail_path, roots["archive_thumbnails"]):
+                        if not _path_exists(item.thumbnail_path):
+                            item.thumbnail_path = None
+
+                if item.timelapse_path and roots["archive_timelapses"]:
+                    if _path_in_scope(item.timelapse_path, roots["archive_timelapses"]):
+                        if not _path_exists(item.timelapse_path):
+                            item.timelapse_path = None
+
+                if should_delete:
+                    await db.delete(item)
+                    archives_deleted += 1
+            except Exception as exc:
+                errors.append(f"Archive record cleanup failed for id={item.id}: {exc}")
+    except Exception as exc:
+        errors.append(f"Failed to clean archive records: {exc}")
+
+    try:
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        errors.append(f"Failed to commit storage DB cleanup: {exc}")
+
+    return library_deleted, archives_deleted, errors
+
+
 def _scan_storage_usage() -> dict:
     base_dir = settings.base_dir
     rules = _get_storage_rules()
@@ -663,6 +783,7 @@ async def get_storage_usage(
 @router.post("/delete-storage-items", response_model=DeleteStorageItemResponse)
 async def delete_storage_items(
     request: DeleteStorageItemRequest,
+    db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
 ):
     """
@@ -699,16 +820,25 @@ async def delete_storage_items(
             except Exception as e:
                 all_errors.append(f"Error deleting {bucket}: {str(e)}")
 
+    db_library_deleted, db_archives_deleted, db_errors = await _cleanup_db_after_storage_delete(
+        db, set(request.category_keys)
+    )
+    all_errors.extend(db_errors)
+
     # Refresh storage cache after deletion
     global _storage_usage_cache, _storage_usage_cache_ts
     _storage_usage_cache = None
     _storage_usage_cache_ts = None
 
     success = len(all_errors) == 0
+    db_summary = ""
+    if db_library_deleted or db_archives_deleted:
+        db_summary = f" | DB cleanup: library={db_library_deleted}, archives={db_archives_deleted}"
+
     message = (
-        f"Successfully deleted {total_deleted_count} items ({format_bytes(total_deleted_bytes)})"
+        f"Successfully deleted {total_deleted_count} items ({format_bytes(total_deleted_bytes)}){db_summary}"
         if success
-        else f"Deleted {total_deleted_count} items with {len(all_errors)} error(s)"
+        else f"Deleted {total_deleted_count} items with {len(all_errors)} error(s){db_summary}"
     )
 
     return DeleteStorageItemResponse(
