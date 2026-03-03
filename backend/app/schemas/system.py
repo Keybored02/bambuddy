@@ -12,6 +12,9 @@ class DeleteStorageItemRequest(BaseModel):
     other_items: list[dict] = []
     """Other items to delete, each with 'bucket' and 'kind' keys."""
 
+    cleanup_db_objects: bool = True
+    """Whether to remove/update DB records linked to deleted files."""
+
     class Config:
         """Pydantic config."""
 
@@ -19,6 +22,7 @@ class DeleteStorageItemRequest(BaseModel):
             "example": {
                 "category_keys": ["archive_timelapses", "downloads"],
                 "other_items": [{"bucket": "some_folder", "kind": "data"}],
+                "cleanup_db_objects": True,
             }
         }
 

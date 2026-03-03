@@ -593,7 +593,7 @@ function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, 
       <div className="aspect-square bg-bambu-dark flex items-center justify-center overflow-hidden">
         {file.thumbnail_path ? (
           <img
-            src={`${api.getLibraryFileThumbnailUrl(file.id)}${thumbnailVersion ? `?v=${thumbnailVersion}` : ''}`}
+            src={`${api.getLibraryFileThumbnailUrl(file.id)}?v=${thumbnailVersion ?? `${file.id}-${new Date(file.created_at).getTime()}`}`}
             alt={file.filename}
             className="w-full h-full object-cover"
           />

@@ -3937,7 +3937,11 @@ export const api = {
     const query = params.toString();
     return request<StorageUsageResponse>(`/system/storage-usage${query ? `?${query}` : ''}`);
   },
-  deleteStorageItems: (data: { category_keys: string[]; other_items: { bucket: string; kind: string }[] }) =>
+  deleteStorageItems: (data: {
+    category_keys: string[];
+    other_items: { bucket: string; kind: string }[];
+    cleanup_db_objects?: boolean;
+  }) =>
     request<{
       success: boolean;
       deleted_count: number;

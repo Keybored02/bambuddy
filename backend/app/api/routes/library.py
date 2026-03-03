@@ -594,10 +594,12 @@ async def delete_folder(
             file_ids.append(file_id)
             # Delete actual files
             try:
-                if file_path and os.path.exists(file_path):
-                    os.remove(file_path)
-                if thumb_path and os.path.exists(thumb_path):
-                    os.remove(thumb_path)
+                abs_file_path = to_absolute_path(file_path)
+                abs_thumb_path = to_absolute_path(thumb_path)
+                if abs_file_path and abs_file_path.exists():
+                    abs_file_path.unlink()
+                if abs_thumb_path and abs_thumb_path.exists():
+                    abs_thumb_path.unlink()
             except OSError as e:
                 logger.warning("Failed to delete file: %s", e)
 
@@ -2117,7 +2119,15 @@ async def get_thumbnail(file_id: int, db: AsyncSession = Depends(get_db)):
     }
     media_type = media_types.get(thumb_ext, "image/png")
 
-    return FastAPIFileResponse(str(abs_thumb_path), media_type=media_type)
+    return FastAPIFileResponse(
+        str(abs_thumb_path),
+        media_type=media_type,
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 @router.get("/files/{file_id}/gcode")

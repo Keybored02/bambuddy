@@ -376,19 +376,29 @@ def _delete_other_bucket(bucket: str, kind: str) -> tuple[int, int, list[str]]:
     return deleted_count, deleted_bytes, errors
 
 
-def _path_exists(path_str: str | None) -> bool:
+def _resolve_storage_path(path_str: str | None) -> Path | None:
     if not path_str:
+        return None
+    path = Path(path_str)
+    if not path.is_absolute():
+        path = settings.base_dir / path
+    return path
+
+
+def _path_exists(path_str: str | None) -> bool:
+    path = _resolve_storage_path(path_str)
+    if not path:
         return False
     try:
-        return Path(path_str).exists()
+        return path.exists()
     except OSError:
         return False
 
 
 def _path_in_scope(path_str: str | None, roots: list[Path]) -> bool:
-    if not path_str:
+    path = _resolve_storage_path(path_str)
+    if not path:
         return False
-    path = Path(path_str)
     for root in roots:
         try:
             if _is_under(path, root):
@@ -396,6 +406,117 @@ def _path_in_scope(path_str: str | None, roots: list[Path]) -> bool:
         except OSError:
             continue
     return False
+
+
+def _safe_delete_file(path: Path | None) -> tuple[int, int, list[str]]:
+    if not path:
+        return 0, 0, []
+    try:
+        if path.is_file():
+            size = path.stat().st_size
+            path.unlink()
+            return 1, size, []
+    except OSError as exc:
+        return 0, 0, [f"Failed to delete {path}: {exc}"]
+    return 0, 0, []
+
+
+def _safe_delete_archive_dir(path: Path | None) -> tuple[int, int, list[str]]:
+    if not path:
+        return 0, 0, []
+
+    try:
+        if not path.exists() or not path.is_dir():
+            return 0, 0, []
+
+        try:
+            path.resolve().relative_to(settings.archive_dir.resolve())
+        except ValueError:
+            return 0, 0, [f"Refusing to delete archive directory outside archive root: {path}"]
+
+        relative_path = path.resolve().relative_to(settings.archive_dir.resolve())
+        if len(relative_path.parts) < 1:
+            return 0, 0, [f"Refusing to delete archive root directly: {path}"]
+
+        size = get_directory_size(path)
+        shutil.rmtree(path, ignore_errors=False)
+        return 1, size, []
+    except OSError as exc:
+        return 0, 0, [f"Failed to delete archive directory {path}: {exc}"]
+
+
+async def _delete_db_backed_category(db: AsyncSession, category_key: str) -> tuple[int, int, list[str]]:
+    """Delete storage for DB-backed entities using parent->children semantics."""
+    deleted_count = 0
+    deleted_bytes = 0
+    errors: list[str] = []
+
+    if category_key in {"library_files", "library_thumbnails", "library_other"}:
+        files = (await db.execute(select(LibraryFile))).scalars().all()
+        deleted_thumbs: set[Path] = set()
+
+        for item in files:
+            file_path = _resolve_storage_path(item.file_path)
+            thumb_path = _resolve_storage_path(item.thumbnail_path)
+
+            if category_key in {"library_files", "library_other"}:
+                count, size, errs = _safe_delete_file(file_path)
+                deleted_count += count
+                deleted_bytes += size
+                errors.extend(errs)
+
+                # Parent delete cascades to known child thumbnail
+                if thumb_path and thumb_path not in deleted_thumbs:
+                    count, size, errs = _safe_delete_file(thumb_path)
+                    deleted_count += count
+                    deleted_bytes += size
+                    errors.extend(errs)
+                    deleted_thumbs.add(thumb_path)
+
+            elif category_key == "library_thumbnails" and thumb_path and thumb_path not in deleted_thumbs:
+                count, size, errs = _safe_delete_file(thumb_path)
+                deleted_count += count
+                deleted_bytes += size
+                errors.extend(errs)
+                deleted_thumbs.add(thumb_path)
+
+        return deleted_count, deleted_bytes, errors
+
+    if category_key in {"archive_files", "archive_thumbnails", "archive_timelapses"}:
+        archives = (await db.execute(select(PrintArchive))).scalars().all()
+
+        if category_key == "archive_files":
+            deleted_dirs: set[Path] = set()
+            for item in archives:
+                main_file = _resolve_storage_path(item.file_path)
+                if not main_file:
+                    continue
+                archive_dir = main_file.parent
+                if archive_dir in deleted_dirs:
+                    continue
+                count, size, errs = _safe_delete_archive_dir(archive_dir)
+                deleted_count += count
+                deleted_bytes += size
+                errors.extend(errs)
+                if count > 0:
+                    deleted_dirs.add(archive_dir)
+
+            return deleted_count, deleted_bytes, errors
+
+        for item in archives:
+            target = (
+                _resolve_storage_path(item.thumbnail_path)
+                if category_key == "archive_thumbnails"
+                else _resolve_storage_path(item.timelapse_path)
+            )
+            count, size, errs = _safe_delete_file(target)
+            deleted_count += count
+            deleted_bytes += size
+            errors.extend(errs)
+
+        return deleted_count, deleted_bytes, errors
+
+    return deleted_count, deleted_bytes, errors
 
 
 def _category_roots_for_db_cleanup(category_keys: set[str]) -> dict[str, list[Path]]:
@@ -797,8 +918,31 @@ async def delete_storage_items(
     total_deleted_bytes = 0
     all_errors: list[str] = []
 
-    # Delete requested categories
+    db_backed_categories = {
+        "library_files",
+        "library_thumbnails",
+        "library_other",
+        "archive_files",
+        "archive_thumbnails",
+        "archive_timelapses",
+    }
+
+    # Delete requested categories (DB-backed ones first to enforce parent->children semantics)
     for category_key in request.category_keys:
+        if category_key not in db_backed_categories:
+            continue
+        try:
+            count, size, errors = await _delete_db_backed_category(db, category_key)
+            total_deleted_count += count
+            total_deleted_bytes += size
+            all_errors.extend(errors)
+        except Exception as e:
+            all_errors.append(f"Error deleting {category_key}: {str(e)}")
+
+    # Delete remaining filesystem-only categories
+    for category_key in request.category_keys:
+        if category_key in db_backed_categories:
+            continue
         try:
             count, size, errors = await asyncio.to_thread(_delete_storage_category, category_key)
             total_deleted_count += count
@@ -820,10 +964,17 @@ async def delete_storage_items(
             except Exception as e:
                 all_errors.append(f"Error deleting {bucket}: {str(e)}")
 
-    db_library_deleted, db_archives_deleted, db_errors = await _cleanup_db_after_storage_delete(
-        db, set(request.category_keys)
-    )
-    all_errors.extend(db_errors)
+    db_library_deleted = 0
+    db_archives_deleted = 0
+    if request.cleanup_db_objects:
+        db_library_deleted, db_archives_deleted, db_errors = await _cleanup_db_after_storage_delete(
+            db, set(request.category_keys)
+        )
+        all_errors.extend(db_errors)
+    else:
+        # Safety guard: guarantee this endpoint does not persist any DB changes
+        # when user explicitly disables DB cleanup.
+        await db.rollback()
 
     # Refresh storage cache after deletion
     global _storage_usage_cache, _storage_usage_cache_ts
@@ -832,14 +983,21 @@ async def delete_storage_items(
 
     success = len(all_errors) == 0
     db_summary = ""
-    if db_library_deleted or db_archives_deleted:
+    if request.cleanup_db_objects and (db_library_deleted or db_archives_deleted):
         db_summary = f" | DB cleanup: library={db_library_deleted}, archives={db_archives_deleted}"
 
-    message = (
-        f"Successfully deleted {total_deleted_count} items ({format_bytes(total_deleted_bytes)}){db_summary}"
-        if success
-        else f"Deleted {total_deleted_count} items with {len(all_errors)} error(s){db_summary}"
-    )
+    if request.cleanup_db_objects:
+        message = (
+            f"Successfully deleted {total_deleted_count} items ({format_bytes(total_deleted_bytes)}){db_summary}"
+            if success
+            else f"Deleted {total_deleted_count} items with {len(all_errors)} error(s){db_summary}"
+        )
+    else:
+        message = (
+            f"Successfully deleted {total_deleted_count} items ({format_bytes(total_deleted_bytes)}); DB objects kept"
+            if success
+            else f"Deleted {total_deleted_count} items with {len(all_errors)} error(s); DB objects kept"
+        )
 
     return DeleteStorageItemResponse(
         success=success,

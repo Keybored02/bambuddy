@@ -136,6 +136,7 @@ export function SettingsPage() {
   const [showStorageDetailsModal, setShowStorageDetailsModal] = useState(false);
   const [selectedStorageItems, setSelectedStorageItems] = useState<Set<string>>(new Set());
   const [showDeleteStorageConfirm, setShowDeleteStorageConfirm] = useState(false);
+  const [deleteStorageDbObjects, setDeleteStorageDbObjects] = useState(true);
 
   // User management state
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
@@ -687,7 +688,11 @@ export function SettingsPage() {
   });
 
   const deleteStorageMutation = useMutation({
-    mutationFn: (data: { category_keys: string[]; other_items: { bucket: string; kind: string }[] }) =>
+    mutationFn: (data: {
+      category_keys: string[];
+      other_items: { bucket: string; kind: string }[];
+      cleanup_db_objects?: boolean;
+    }) =>
       api.deleteStorageItems(data),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ['storage-usage'] });
@@ -705,6 +710,7 @@ export function SettingsPage() {
       setShowStorageDetailsModal(false);
       setSelectedStorageItems(new Set());
       setShowDeleteStorageConfirm(false);
+      setDeleteStorageDbObjects(true);
     },
     onError: (error: Error) => {
       showToast(`Failed to delete storage items: ${error.message}`, 'error');
@@ -4651,11 +4657,28 @@ export function SettingsPage() {
                 <AlertTriangle className="w-4 h-4" />
                 This action cannot be undone!
               </p>
+              <label className="flex items-start gap-3 p-3 rounded-lg border border-bambu-dark-tertiary bg-bambu-dark-tertiary/40">
+                <input
+                  type="checkbox"
+                  checked={deleteStorageDbObjects}
+                  onChange={(e) => setDeleteStorageDbObjects(e.target.checked)}
+                  className="w-4 h-4 mt-0.5 rounded cursor-pointer accent-bambu-green"
+                />
+                <div>
+                  <p className="text-sm text-white">Also delete related DB objects</p>
+                  <p className="text-xs text-bambu-gray">
+                    Recommended. Removes/updates archive and library records that would otherwise point to missing files.
+                  </p>
+                </div>
+              </label>
             </CardContent>
             <div className="p-4 border-t border-bambu-dark-tertiary flex gap-2 justify-end">
               <Button
                 variant="secondary"
-                onClick={() => setShowDeleteStorageConfirm(false)}
+                onClick={() => {
+                  setShowDeleteStorageConfirm(false);
+                  setDeleteStorageDbObjects(true);
+                }}
                 disabled={deleteStorageMutation.isPending}
               >
                 Cancel
@@ -4679,7 +4702,11 @@ export function SettingsPage() {
                     }
                   });
 
-                  deleteStorageMutation.mutate({ category_keys, other_items });
+                  deleteStorageMutation.mutate({
+                    category_keys,
+                    other_items,
+                    cleanup_db_objects: deleteStorageDbObjects,
+                  });
                 }}
                 disabled={deleteStorageMutation.isPending}
               >
