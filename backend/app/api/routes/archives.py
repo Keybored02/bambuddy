@@ -8,7 +8,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, Response
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core.auth import (
@@ -148,6 +148,49 @@ async def list_archives(
     # Get sets of duplicate hashes and duplicate (name, hash) pairs (efficient single queries)
     duplicate_hashes, duplicate_name_hash_pairs = await service.get_duplicate_hashes_and_names()
 
+    # Batch-fetch duplicate groups for just the duplicate candidates in this page.
+    hash_candidates = {a.content_hash for a in archives if a.content_hash and a.content_hash in duplicate_hashes}
+    name_hash_candidates = {
+        (a.print_name.lower(), a.content_hash)
+        for a in archives
+        if a.print_name and a.content_hash and (a.print_name.lower(), a.content_hash) in duplicate_name_hash_pairs
+    }
+
+    duplicates_by_hash: dict[str, list[tuple[int, datetime | None]]] = {}
+    if hash_candidates:
+        hash_rows = await db.execute(
+            select(PrintArchive.id, PrintArchive.content_hash, PrintArchive.created_at).where(
+                PrintArchive.content_hash.in_(hash_candidates)
+            )
+        )
+        for row in hash_rows.all():
+            if row.content_hash is None:
+                continue
+            duplicates_by_hash.setdefault(row.content_hash, []).append((row.id, row.created_at))
+
+    duplicates_by_name_hash: dict[tuple[str, str], list[tuple[int, datetime | None]]] = {}
+    if name_hash_candidates:
+        name_hash_conditions = [
+            and_(
+                func.lower(PrintArchive.print_name) == print_name_lower,
+                PrintArchive.content_hash == content_hash,
+            )
+            for print_name_lower, content_hash in name_hash_candidates
+        ]
+        name_hash_rows = await db.execute(
+            select(
+                PrintArchive.id,
+                func.lower(PrintArchive.print_name).label("print_name_lower"),
+                PrintArchive.content_hash,
+                PrintArchive.created_at,
+            ).where(or_(*name_hash_conditions))
+        )
+        for row in name_hash_rows.all():
+            if not row.print_name_lower or not row.content_hash:
+                continue
+            key = (row.print_name_lower, row.content_hash)
+            duplicates_by_name_hash.setdefault(key, []).append((row.id, row.created_at))
+
     # Build response with duplicate sequence and original archive ID pre-computed
     result = []
     for a in archives:
@@ -163,27 +206,28 @@ async def list_archives(
         original_archive_id: int | None = None
 
         if has_duplicate:
-            # Fetch duplicates for this archive to compute sequence
-            duplicates = await service.find_duplicates(
-                archive_id=a.id,
-                content_hash=a.content_hash if has_hash_dup else None,
-                print_name=a.print_name if has_name_dup else None,
-            )
+            all_copies_map: dict[int, datetime | None] = {a.id: a.created_at}
 
-            if duplicates:
-                # Combine current archive with duplicates and sort by created_at
-                all_copies = [
-                    {"id": a.id, "created_at": a.created_at},
-                    *[{"id": d["id"], "created_at": d["created_at"]} for d in duplicates],
-                ]
-                all_copies.sort(key=lambda x: x["created_at"])
+            if has_hash_dup and a.content_hash:
+                for archive_id, created_at in duplicates_by_hash.get(a.content_hash, []):
+                    all_copies_map.setdefault(archive_id, created_at)
 
-                # Find the index of the current archive (0 = original, 1+ = duplicate)
-                current_index = next((i for i, item in enumerate(all_copies) if item["id"] == a.id), 0)
-                duplicate_sequence = current_index
+            if has_name_dup and a.print_name and a.content_hash:
+                key = (a.print_name.lower(), a.content_hash)
+                for archive_id, created_at in duplicates_by_name_hash.get(key, []):
+                    all_copies_map.setdefault(archive_id, created_at)
 
-                # Store the original archive ID (the first one chronologically)
-                original_archive_id = all_copies[0]["id"]
+            if len(all_copies_map) > 1:
+                all_copies = sorted(
+                    all_copies_map.items(),
+                    key=lambda item: (item[1] or datetime.min.replace(tzinfo=timezone.utc), item[0]),
+                )
+
+                # Index 0 is original; 1+ are duplicate sequence positions.
+                duplicate_sequence = next((i for i, (archive_id, _) in enumerate(all_copies) if archive_id == a.id), 0)
+                original_archive_id = all_copies[0][0]
+            else:
+                has_duplicate = False
 
         result.append(
             archive_to_response(

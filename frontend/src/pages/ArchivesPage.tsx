@@ -2685,6 +2685,18 @@ export function ArchivesPage() {
 
   const selectionMode = isSelectionMode || selectedIds.size > 0;
 
+  const handleNavigateToArchive = useCallback((archiveId: number) => {
+    setHighlightedArchiveId(archiveId);
+
+    const isInCurrentView = filteredArchives?.some((archive) => archive.id === archiveId) ?? false;
+    if (!isInCurrentView) {
+      showToast(
+        `Original print #${archiveId} is not in the current view. Clear filters or switch view to locate it.`,
+        'warning'
+      );
+    }
+  }, [filteredArchives, showToast]);
+
   const toggleSelect = (id: number) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -2804,7 +2816,7 @@ export function ArchivesPage() {
 
   return (
     <div
-      className="p-4 md:p-8 relative"
+      className="p-4 md:p-8 relative min-h-full"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
@@ -3290,7 +3302,7 @@ export function ArchivesPage() {
               preferredSlicer={preferredSlicer}
               currency={currency}
               t={t}
-              onNavigateToArchive={setHighlightedArchiveId}
+              onNavigateToArchive={handleNavigateToArchive}
             />
           ))}
         </div>
@@ -3319,7 +3331,7 @@ export function ArchivesPage() {
                 isHighlighted={archive.id === highlightedArchiveId}
                 preferredSlicer={preferredSlicer}
                 t={t}
-                onNavigateToArchive={setHighlightedArchiveId}
+                onNavigateToArchive={handleNavigateToArchive}
               />
             ))}
           </div>
