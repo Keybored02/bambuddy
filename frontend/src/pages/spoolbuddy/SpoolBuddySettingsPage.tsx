@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next';
 import type { SpoolBuddyOutletContext } from '../../components/spoolbuddy/SpoolBuddyLayout';
 import { DiagnosticModal } from '../../components/spoolbuddy/DiagnosticModal';
 import { spoolbuddyApi, type SpoolBuddyDevice, type DaemonUpdateCheck } from '../../api/client';
-import { DiagnosticModal } from '../../components/spoolbuddy/DiagnosticModal';
 import { FileText, Wand2, Zap } from 'lucide-react';
 function formatUptime(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
