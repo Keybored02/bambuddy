@@ -5003,6 +5003,12 @@ export const spoolbuddyApi = {
       method: 'POST',
       body: '{}',
     }),
+
+  runDiagnostics: (type: 'nfc' | 'scale') =>
+    request<{ success: boolean; output: string; exit_code: number }>('/spoolbuddy/diagnostics/run', {
+      method: 'POST',
+      body: JSON.stringify({ diagnostic: type }),
+    }),
 };
 
 export interface BugReportRequest {
