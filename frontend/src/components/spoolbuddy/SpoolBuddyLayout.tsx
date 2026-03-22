@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Outlet } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -37,6 +37,11 @@ export function SpoolBuddyLayout() {
     refetchInterval: 30000,
   });
   const device = devices[0];
+  const effectiveDeviceOnline = sbState.deviceOnline || Boolean(device?.online);
+  const sbStateForUi = useMemo(
+    () => ({ ...sbState, deviceOnline: effectiveDeviceOnline }),
+    [sbState, effectiveDeviceOnline]
+  );
 
   // Sync display settings from device on initial load
   const initializedRef = useRef(false);
@@ -60,12 +65,12 @@ export function SpoolBuddyLayout() {
 
   // Update alert based on device state
   useEffect(() => {
-    if (!sbState.deviceOnline) {
+    if (!effectiveDeviceOnline) {
       setAlert({ type: 'warning', message: 'SpoolBuddy device disconnected' });
     } else {
       setAlert(null);
     }
-  }, [sbState.deviceOnline]);
+  }, [effectiveDeviceOnline]);
 
   // Track user activity for screen blank
   const resetActivity = useCallback(() => {
@@ -107,12 +112,12 @@ export function SpoolBuddyLayout() {
         <SpoolBuddyTopBar
           selectedPrinterId={selectedPrinterId}
           onPrinterChange={setSelectedPrinterId}
-          deviceOnline={sbState.deviceOnline}
+          deviceOnline={effectiveDeviceOnline}
         />
 
         <main className="flex-1 overflow-y-auto">
           <Outlet context={{
-            selectedPrinterId, setSelectedPrinterId, sbState, setAlert,
+            selectedPrinterId, setSelectedPrinterId, sbState: sbStateForUi, setAlert,
             displayBrightness, setDisplayBrightness,
             displayBlankTimeout, setDisplayBlankTimeout,
           }} />
