@@ -608,6 +608,7 @@ async def update_display_settings(
     device.display_brightness = req.brightness
     device.display_blank_timeout = req.blank_timeout
     await db.commit()
+    return {"status": "ok", "brightness": req.brightness, "blank_timeout": req.blank_timeout}
 
 
 @router.post("/devices/{device_id}/system/config")
