@@ -106,10 +106,6 @@ class UpdateSpoolWeightRequest(BaseModel):
 # --- Calibration schemas ---
 
 
-class TareRequest(BaseModel):
-    pass
-
-
 class SetTareRequest(BaseModel):
     tare_offset: int
 
