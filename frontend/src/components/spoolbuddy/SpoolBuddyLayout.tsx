@@ -81,7 +81,7 @@ export function SpoolBuddyLayout() {
     } else {
       setAlert(null);
     }
-  }, [sbState.deviceOnline]);
+  }, [effectiveDeviceOnline]);
 
   // Track user activity for screen blank
   const resetActivity = useCallback(() => {
