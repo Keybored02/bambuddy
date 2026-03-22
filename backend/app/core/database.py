@@ -135,6 +135,10 @@ async def run_migrations(conn):
     """Add new columns to existing tables if they don't exist."""
     from sqlalchemy import text
 
+    async def _sqlite_has_column(table: str, column: str) -> bool:
+        result = await conn.execute(text(f"PRAGMA table_info({table})"))
+        return any(row[1] == column for row in result.fetchall())
+
     # Migration: Add is_favorite column to print_archives
     try:
         await conn.execute(text("ALTER TABLE print_archives ADD COLUMN is_favorite BOOLEAN DEFAULT 0"))
@@ -1364,47 +1368,28 @@ async def run_migrations(conn):
     except OperationalError:
         pass  # Already applied
 
-    # Migration: Add NFC reader and display control columns to spoolbuddy_devices
-    try:
-        await conn.execute(text("ALTER TABLE spoolbuddy_devices ADD COLUMN nfc_reader_type VARCHAR(20)"))
-    except OperationalError:
-        pass  # Already applied
-    try:
-        await conn.execute(text("ALTER TABLE spoolbuddy_devices ADD COLUMN nfc_connection VARCHAR(20)"))
-    except OperationalError:
-        pass  # Already applied
-    try:
-        await conn.execute(text("ALTER TABLE spoolbuddy_devices ADD COLUMN display_brightness INTEGER DEFAULT 100"))
-    except OperationalError:
-        pass  # Already applied
-    try:
-        await conn.execute(text("ALTER TABLE spoolbuddy_devices ADD COLUMN display_blank_timeout INTEGER DEFAULT 0"))
-    except OperationalError:
-        pass  # Already applied
-    try:
-        await conn.execute(text("ALTER TABLE spoolbuddy_devices ADD COLUMN has_backlight BOOLEAN DEFAULT 0"))
-    except OperationalError:
-        pass  # Already applied
-    try:
-        await conn.execute(text("ALTER TABLE spoolbuddy_devices ADD COLUMN last_calibrated_at DATETIME"))
-    except OperationalError:
-        pass  # Already applied
-
-    # Migration: Add NFC tag write payload column to spoolbuddy_devices
-    try:
-        await conn.execute(text("ALTER TABLE spoolbuddy_devices ADD COLUMN pending_write_payload TEXT"))
-    except OperationalError:
-        pass  # Already applied
-
-    # Migration: Persist SpoolBuddy backend URL and queued system payload
-    try:
-        await conn.execute(text("ALTER TABLE spoolbuddy_devices ADD COLUMN backend_url VARCHAR(255)"))
-    except OperationalError:
-        pass  # Already applied
-    try:
-        await conn.execute(text("ALTER TABLE spoolbuddy_devices ADD COLUMN pending_system_payload TEXT"))
-    except OperationalError:
-        pass  # Already applied
+    # Migration: Ensure spoolbuddy_devices has all required columns.
+    # Use schema introspection to avoid silently swallowing unrelated SQL errors.
+    spoolbuddy_columns = [
+        ("nfc_reader_type", "ALTER TABLE spoolbuddy_devices ADD COLUMN nfc_reader_type VARCHAR(20)"),
+        ("nfc_connection", "ALTER TABLE spoolbuddy_devices ADD COLUMN nfc_connection VARCHAR(20)"),
+        (
+            "display_brightness",
+            "ALTER TABLE spoolbuddy_devices ADD COLUMN display_brightness INTEGER DEFAULT 100",
+        ),
+        (
+            "display_blank_timeout",
+            "ALTER TABLE spoolbuddy_devices ADD COLUMN display_blank_timeout INTEGER DEFAULT 0",
+        ),
+        ("has_backlight", "ALTER TABLE spoolbuddy_devices ADD COLUMN has_backlight BOOLEAN DEFAULT 0"),
+        ("last_calibrated_at", "ALTER TABLE spoolbuddy_devices ADD COLUMN last_calibrated_at DATETIME"),
+        ("pending_write_payload", "ALTER TABLE spoolbuddy_devices ADD COLUMN pending_write_payload TEXT"),
+        ("backend_url", "ALTER TABLE spoolbuddy_devices ADD COLUMN backend_url VARCHAR(255)"),
+        ("pending_system_payload", "ALTER TABLE spoolbuddy_devices ADD COLUMN pending_system_payload TEXT"),
+    ]
+    for col_name, alter_sql in spoolbuddy_columns:
+        if not await _sqlite_has_column("spoolbuddy_devices", col_name):
+            await conn.execute(text(alter_sql))
 
     # Migration: Convert ams_labels table from (printer_id, ams_id) key to ams_serial_number key
     # Labels are now keyed by AMS serial number so they persist when the AMS is moved to another printer.
