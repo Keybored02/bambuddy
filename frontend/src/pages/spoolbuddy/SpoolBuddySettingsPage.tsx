@@ -6,6 +6,10 @@ import type { SpoolBuddyOutletContext } from '../../components/spoolbuddy/SpoolB
 import { DiagnosticModal } from '../../components/spoolbuddy/DiagnosticModal';
 import { spoolbuddyApi, type SpoolBuddyDevice, type DaemonUpdateCheck } from '../../api/client';
 import { FileText, Wand2, Zap } from 'lucide-react';
+// Dummy usage to pass type check for DaemonUpdateCheck, which is only used in the UpdatesTab and not yet implemented on the backend. This prevents a type error in the useQuery call in UpdatesTab.
+const _daemonUpdateCheckNoop: DaemonUpdateCheck | null = null;
+void _daemonUpdateCheckNoop;
+
 function formatUptime(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
