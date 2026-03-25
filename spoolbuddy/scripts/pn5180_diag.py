@@ -17,6 +17,16 @@ Wiring (from spoolbuddy/README.md):
 
 import os
 import sys
+import time
+
+import gpiod
+from pn5180 import (
+    NSS_PIN as DRIVER_NSS_PIN,  # noqa: E402
+    PN5180,  # noqa: E402
+    RST_PIN as DRIVER_RST_PIN,  # noqa: E402
+    SPI_BUS as DRIVER_SPI_BUS,  # noqa: E402
+    SPI_DEVICE as DRIVER_SPI_DEVICE,  # noqa: E402
+)
 
 import gpiod
 
