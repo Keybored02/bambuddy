@@ -1,17 +1,15 @@
-"""NAU7802 24-bit ADC driver for load cell / scale applications.
+#!/usr/bin/env python3
+"""NAU7802 Scale Diagnostic - ported from SpoolBuddy Rust firmware.
 
 I2C address: 0x2A
 Bus: /dev/i2c-1 (GPIO2/GPIO3 on RPi)
 """
 
-import logging
 import os
 import struct
 import time
 
 import smbus2
-
-logger = logging.getLogger(__name__)
 
 
 def _env_int(name: str, default: int) -> int:
@@ -51,7 +49,7 @@ PU_AVDDS = 0x80  # AVDD source select
 
 
 class NAU7802:
-    def __init__(self, bus: int = I2C_BUS, addr: int = NAU7802_ADDR):
+    def __init__(self, bus=I2C_BUS, addr=NAU7802_ADDR):
         self._bus_num = bus
         self._bus = smbus2.SMBus(bus)
         self._addr = addr
