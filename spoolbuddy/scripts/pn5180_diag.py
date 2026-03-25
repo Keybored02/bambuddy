@@ -20,6 +20,10 @@ import sys
 import time
 
 import gpiod
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "daemon")))
+
+
 from pn5180 import (
     NSS_PIN as DRIVER_NSS_PIN,  # noqa: E402
     PN5180,  # noqa: E402
