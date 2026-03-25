@@ -17,7 +17,6 @@ Wiring (from spoolbuddy/README.md):
 
 import os
 import sys
-import time
 
 import gpiod
 
