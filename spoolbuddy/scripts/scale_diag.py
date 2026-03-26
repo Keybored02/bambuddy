@@ -5,7 +5,6 @@ I2C address: 0x2A
 Bus: /dev/i2c-1 (GPIO2/GPIO3 on RPi)
 """
 
-import logging
 import os
 import sys
 import time
@@ -16,7 +15,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..",
 
 from nau7802 import NAU7802
 
-logging.basicConfig(level=logging.DEBUG)
+from nau7802 import NAU7802
 
 
 def _env_int(name: str, default: int) -> int:
@@ -157,6 +156,11 @@ def main():
         low_esr = (pga >> 6) & 0x1
         low_esr_str = "Enabled" if low_esr == 0 else "Disabled"
         print(f"    PGA low-ESR caps: {low_esr_str}")
+        # PU_CTRL bit 7: AVDD source select
+        pu_ctrl = scale.read_reg(REG_PU_CTRL)
+        avdds = (pu_ctrl >> 7) & 0x1
+        avdds_str = "Internal LDO" if avdds == 1 else "AVDD pin input"
+        print(f"    AVDD source select: {avdds_str} (PU_CTRL bit 7)")
 
         print("[2] Waiting for first reading...")
         for _ in range(200):
