@@ -156,11 +156,6 @@ def main():
         low_esr = (pga >> 6) & 0x1
         low_esr_str = "Enabled" if low_esr == 0 else "Disabled"
         print(f"    PGA low-ESR caps: {low_esr_str}")
-        # PU_CTRL bit 7: AVDD source select
-        pu_ctrl = scale.read_reg(REG_PU_CTRL)
-        avdds = (pu_ctrl >> 7) & 0x1
-        avdds_str = "Internal LDO" if avdds == 1 else "AVDD pin input"
-        print(f"    AVDD source select: {avdds_str} (PU_CTRL bit 7)")
 
         print("[2] Waiting for first reading...")
         for _ in range(200):
