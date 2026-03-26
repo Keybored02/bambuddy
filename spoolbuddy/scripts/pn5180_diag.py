@@ -24,12 +24,12 @@ import gpiod
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "daemon")))
 
 
-from pn5180 import (
-    NSS_PIN as DRIVER_NSS_PIN,  # noqa: E402
-    PN5180,  # noqa: E402
-    RST_PIN as DRIVER_RST_PIN,  # noqa: E402
-    SPI_BUS as DRIVER_SPI_BUS,  # noqa: E402
-    SPI_DEVICE as DRIVER_SPI_DEVICE,  # noqa: E402
+from pn5180 import (  # noqa: E402
+    NSS_PIN as DRIVER_NSS_PIN,
+    PN5180,
+    RST_PIN as DRIVER_RST_PIN,
+    SPI_BUS as DRIVER_SPI_BUS,
+    SPI_DEVICE as DRIVER_SPI_DEVICE,
 )
 
 import gpiod
