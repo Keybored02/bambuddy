@@ -10,6 +10,7 @@ but with qos=1 they respond instantly.
 import asyncio
 import json
 import logging
+import os
 import ssl
 import threading
 import time
@@ -268,6 +269,7 @@ class BambuMQTTClient:
     # Class-level cache: serial_number -> False when request topic is known unsupported.
     # Persists across client instances so reconnects don't re-trigger failed subscriptions.
     _request_topic_cache: dict[str, bool] = {}
+    _client_instance_counter: int = 0
 
     def __init__(
         self,
@@ -452,21 +454,10 @@ class BambuMQTTClient:
             self._request_topic_sub_time = 0.0
 
     def _on_disconnect(self, client, userdata, disconnect_flags=None, rc=None, properties=None):
-        # Always unblock disconnect() callers, regardless of whether we suppress
-        # the state broadcast below.  disconnect() sets _disconnection_event and
-        # waits on it — every callback path must fire it.
-        if self._disconnection_event:
-            self._disconnection_event.set()
-
-        # If we intentionally closed the socket for stale reconnect, don't broadcast
-        # another state change — check_staleness() already set connected=False and
-        # notified the UI.  Just log and let paho auto-reconnect.
-        if self._stale_reconnecting:
-            logger.info(
-                "[%s] Disconnect callback after stale reconnect (expected), rc=%s",
-                self.serial_number,
-                rc,
-            )
+        # Paho can occasionally emit disconnect callbacks while still connected.
+        # If socket remains connected, this callback is spurious and should be ignored.
+        if client is not None and client.is_connected():
+            logger.debug("[%s] Ignoring spurious disconnect callback while client is connected", self.serial_number)
             return
 
         # Ignore spurious disconnect callbacks if we've received a message recently
@@ -475,6 +466,14 @@ class BambuMQTTClient:
         # — only suppress when rc indicates a clean/normal disconnect.
         is_error_disconnect = rc is not None and hasattr(rc, "is_failure") and rc.is_failure
         time_since_last_message = time.time() - self._last_message_time
+        if time_since_last_message < 3.0 and self._last_message_time > 0:
+            logger.debug(
+                "[%s] Ignoring transient disconnect callback (last message %.1fs ago, rc=%s)",
+                self.serial_number,
+                time_since_last_message,
+                rc,
+            )
+            return
         if not is_error_disconnect and time_since_last_message < 10.0 and self._last_message_time > 0:
             logger.debug(
                 f"[{self.serial_number}] Ignoring spurious disconnect (last message {time_since_last_message:.1f}s ago)"
@@ -2629,9 +2628,11 @@ class BambuMQTTClient:
                   If not provided, will try to get the running loop.
         """
         self._loop = loop
+        BambuMQTTClient._client_instance_counter += 1
+        client_id = f"bambuddy_{self.serial_number}_{os.getpid()}_{BambuMQTTClient._client_instance_counter}"
         self._client = mqtt.Client(
             callback_api_version=mqtt.CallbackAPIVersion.VERSION2,
-            client_id=f"bambuddy_{self.serial_number}",
+            client_id=client_id,
             protocol=mqtt.MQTTv311,
         )
 
@@ -2647,13 +2648,11 @@ class BambuMQTTClient:
         ssl_context.verify_mode = ssl.CERT_NONE
         self._client.tls_set_context(ssl_context)
 
-        # Keepalive: paho sends PINGREQs at this interval, broker considers
-        # client dead at 1.5x.  30s is a good balance — fast enough to detect
-        # real network loss (45s), not so aggressive that transient hiccups
-        # trigger false disconnects.  Stale detection (60s no messages) handles
-        # the P1S/P1P firmware bug where the broker stops publishing but the
-        # TCP connection stays alive.
-        self._client.connect_async(self.ip_address, self.MQTT_PORT, keepalive=30)
+        # Backoff reconnects to avoid tight reconnect loops on unstable brokers.
+        self._client.reconnect_delay_set(min_delay=1, max_delay=30)
+
+        # Use standard keepalive to reduce false-positive disconnect churn.
+        self._client.connect_async(self.ip_address, self.MQTT_PORT, keepalive=60)
         self._client.loop_start()
 
     def start_print(
