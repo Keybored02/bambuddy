@@ -33,6 +33,7 @@ import { SpoolBuddySettingsPage } from './pages/spoolbuddy/SpoolBuddySettingsPag
 import { SpoolBuddyCalibrationPage } from './pages/spoolbuddy/SpoolBuddyCalibrationPage';
 import { SpoolBuddyWriteTagPage } from './pages/spoolbuddy/SpoolBuddyWriteTagPage';
 import { SpoolBuddyInventoryPage } from './pages/spoolbuddy/SpoolBuddyInventoryPage';
+import { WebNfcListener } from './components/WebNfcListener';
 class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null; errorInfo: ErrorInfo | null }> {
   state = { error: null as Error | null, errorInfo: null as ErrorInfo | null };
 
@@ -196,6 +197,7 @@ function App() {
                   <Route path="external/:id" element={<ExternalLinkPage />} />
                 </Route>
               </Routes>
+              <WebNfcListener />
             </BrowserRouter>
           </AuthProvider>
         </QueryClientProvider>
