@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Nfc, X, AlertTriangle } from 'lucide-react';
+import { api, type InventorySpool } from '../api/client';
 
 type NfcStatus = 'unsupported' | 'off' | 'idle' | 'scanning' | 'permission-needed' | 'error';
 
@@ -54,6 +56,53 @@ function normalizeHexTag(value: string | null | undefined): string {
   return value.replace(/[^0-9a-f]/gi, '').toUpperCase();
 }
 
+function normalizeTagUid(value: string | null | undefined): string {
+  const uid = normalizeHexTag(value);
+  if (uid.length > 16) {
+    return uid.slice(-16);
+  }
+  return uid;
+}
+
+function isZeroHex(value: string): boolean {
+  return value.length > 0 && /^0+$/.test(value);
+}
+
+function uidMatches(scannedUid: string | null | undefined, storedUid: string | null | undefined): boolean {
+  const scanned = normalizeTagUid(scannedUid);
+  const stored = normalizeTagUid(storedUid);
+
+  if (!scanned || !stored || isZeroHex(scanned) || isZeroHex(stored)) {
+    return false;
+  }
+
+  if (scanned === stored) {
+    return true;
+  }
+
+  if (stored.length > scanned.length && stored.endsWith(scanned)) {
+    return true;
+  }
+
+  if (scanned.length > stored.length && scanned.endsWith(stored)) {
+    return true;
+  }
+
+  if (scanned.length >= 8 && stored.endsWith(scanned.slice(-8))) {
+    return true;
+  }
+
+  if (scanned.length === stored.length && scanned.length > 1 && scanned.slice(1) === stored.slice(1)) {
+    return true;
+  }
+
+  if (scanned.length === 8 && stored.length >= 8 && scanned.slice(1) === stored.slice(0, 8).slice(1)) {
+    return true;
+  }
+
+  return false;
+}
+
 function decodeRecordPayload(record: NdefRecordLike): string {
   const raw = record.data;
   if (!(raw instanceof DataView) && !(raw instanceof ArrayBuffer)) {
@@ -105,6 +154,21 @@ export function WebNfcListener() {
   const [lastRead, setLastRead] = useState<NfcReadView | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const { data: spools = [] } = useQuery({
+    queryKey: ['inventory-spools', 'web-nfc-listener'],
+    queryFn: () => api.getSpools(false),
+    staleTime: 30 * 1000,
+    refetchOnWindowFocus: true,
+  });
+
+  const matchedSpool = useMemo<InventorySpool | null>(() => {
+    if (!lastRead) {
+      return null;
+    }
+
+    return spools.find((spool) => uidMatches(lastRead.serialNumber, spool.tag_uid)) ?? null;
+  }, [lastRead, spools]);
 
   const readerRef = useRef<NdefReaderLike | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -301,6 +365,21 @@ export function WebNfcListener() {
             <p>
               <span className="text-bambu-gray">Serial:</span> {lastRead.serialNumber}
             </p>
+            {matchedSpool && (
+              <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-2 py-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-green-300">Matched spool</p>
+                <p className="text-[12px] font-semibold text-zinc-100">
+                  #{matchedSpool.id} {matchedSpool.brand ? `${matchedSpool.brand} ` : ''}{matchedSpool.material}
+                  {matchedSpool.subtype ? ` ${matchedSpool.subtype}` : ''}
+                </p>
+                <p className="text-[10px] text-zinc-300">
+                  {matchedSpool.color_name || 'Unknown color'}
+                  {typeof matchedSpool.label_weight === 'number'
+                    ? ` • ${Math.max(0, Math.round(matchedSpool.label_weight - (matchedSpool.weight_used || 0)))}g left`
+                    : ''}
+                </p>
+              </div>
+            )}
             <p>
               <span className="text-bambu-gray">Records:</span> {lastRead.records.length}
             </p>
