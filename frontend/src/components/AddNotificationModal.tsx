@@ -42,6 +42,23 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
   const [onMaintenanceDue, setOnMaintenanceDue] = useState(provider?.on_maintenance_due ?? false);
   const [onBedCooled, setOnBedCooled] = useState(provider?.on_bed_cooled ?? false);
   const [onFirstLayerComplete, setOnFirstLayerComplete] = useState(provider?.on_first_layer_complete ?? false);
+  const [onPrintMissingSpoolAssignment, setOnPrintMissingSpoolAssignment] = useState(provider?.on_print_missing_spool_assignment ?? false);
+  const [onPlateNotEmpty, setOnPlateNotEmpty] = useState(provider?.on_plate_not_empty ?? true);
+
+  // AMS alarms
+  const [onAmsHumidityHigh, setOnAmsHumidityHigh] = useState(provider?.on_ams_humidity_high ?? false);
+  const [onAmsTemperatureHigh, setOnAmsTemperatureHigh] = useState(provider?.on_ams_temperature_high ?? false);
+  const [onAmsHtHumidityHigh, setOnAmsHtHumidityHigh] = useState(provider?.on_ams_ht_humidity_high ?? false);
+  const [onAmsHtTemperatureHigh, setOnAmsHtTemperatureHigh] = useState(provider?.on_ams_ht_temperature_high ?? false);
+
+  // Queue events
+  const [onQueueJobAdded, setOnQueueJobAdded] = useState(provider?.on_queue_job_added ?? false);
+  const [onQueueJobAssigned, setOnQueueJobAssigned] = useState(provider?.on_queue_job_assigned ?? false);
+  const [onQueueJobStarted, setOnQueueJobStarted] = useState(provider?.on_queue_job_started ?? false);
+  const [onQueueJobWaiting, setOnQueueJobWaiting] = useState(provider?.on_queue_job_waiting ?? true);
+  const [onQueueJobSkipped, setOnQueueJobSkipped] = useState(provider?.on_queue_job_skipped ?? true);
+  const [onQueueJobFailed, setOnQueueJobFailed] = useState(provider?.on_queue_job_failed ?? true);
+  const [onQueueCompleted, setOnQueueCompleted] = useState(provider?.on_queue_completed ?? false);
 
   // Provider-specific config
   const [config, setConfig] = useState<Record<string, string>>(
@@ -143,6 +160,21 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
       on_maintenance_due: onMaintenanceDue,
       on_bed_cooled: onBedCooled,
       on_first_layer_complete: onFirstLayerComplete,
+      on_print_missing_spool_assignment: onPrintMissingSpoolAssignment,
+      on_plate_not_empty: onPlateNotEmpty,
+      // AMS alarms
+      on_ams_humidity_high: onAmsHumidityHigh,
+      on_ams_temperature_high: onAmsTemperatureHigh,
+      on_ams_ht_humidity_high: onAmsHtHumidityHigh,
+      on_ams_ht_temperature_high: onAmsHtTemperatureHigh,
+      // Queue events
+      on_queue_job_added: onQueueJobAdded,
+      on_queue_job_assigned: onQueueJobAssigned,
+      on_queue_job_started: onQueueJobStarted,
+      on_queue_job_waiting: onQueueJobWaiting,
+      on_queue_job_skipped: onQueueJobSkipped,
+      on_queue_job_failed: onQueueJobFailed,
+      on_queue_completed: onQueueCompleted,
     };
 
     if (isEditing) {
@@ -502,6 +534,20 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
                   </div>
                   <Toggle checked={onFirstLayerComplete} onChange={setOnFirstLayerComplete} />
                 </div>
+                <div className="flex items-center justify-between col-span-2">
+                  <div>
+                    <span className="text-sm text-white">{t('notifications.plateNotEmpty')}</span>
+                    <span className="text-xs text-bambu-gray ml-1">{t('notifications.plateNotEmptyDescription')}</span>
+                  </div>
+                  <Toggle checked={onPlateNotEmpty} onChange={setOnPlateNotEmpty} />
+                </div>
+                <div className="flex items-center justify-between col-span-2">
+                  <div>
+                    <span className="text-sm text-white">{t('notifications.missingSpoolAssignmentLabel')}</span>
+                    <span className="text-xs text-bambu-gray ml-1">{t('notifications.missingSpoolAssignmentDescription')}</span>
+                  </div>
+                  <Toggle checked={onPrintMissingSpoolAssignment} onChange={setOnPrintMissingSpoolAssignment} />
+                </div>
               </div>
             </div>
 
@@ -524,6 +570,97 @@ export function AddNotificationModal({ provider, onClose }: AddNotificationModal
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-white">{t('notifications.maintenance')}</span>
                   <Toggle checked={onMaintenanceDue} onChange={setOnMaintenanceDue} />
+                </div>
+              </div>
+            </div>
+
+            {/* AMS Alarms */}
+            <div className="space-y-2 p-3 bg-bambu-dark rounded-lg">
+              <p className="text-xs text-bambu-gray uppercase tracking-wide mb-2">{t('notifications.amsAlarms')}</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="flex items-center justify-between col-span-2">
+                  <div>
+                    <span className="text-sm text-white">{t('notifications.amsHumidityHigh')}</span>
+                    <span className="text-xs text-bambu-gray ml-1">{t('notifications.amsHumidityHighDescription')}</span>
+                  </div>
+                  <Toggle checked={onAmsHumidityHigh} onChange={setOnAmsHumidityHigh} />
+                </div>
+                <div className="flex items-center justify-between col-span-2">
+                  <div>
+                    <span className="text-sm text-white">{t('notifications.amsTemperatureHigh')}</span>
+                    <span className="text-xs text-bambu-gray ml-1">{t('notifications.amsTemperatureHighDescription')}</span>
+                  </div>
+                  <Toggle checked={onAmsTemperatureHigh} onChange={setOnAmsTemperatureHigh} />
+                </div>
+                <div className="flex items-center justify-between col-span-2">
+                  <div>
+                    <span className="text-sm text-white">{t('notifications.amsHtHumidityHigh')}</span>
+                    <span className="text-xs text-bambu-gray ml-1">{t('notifications.amsHtHumidityHighDescription')}</span>
+                  </div>
+                  <Toggle checked={onAmsHtHumidityHigh} onChange={setOnAmsHtHumidityHigh} />
+                </div>
+                <div className="flex items-center justify-between col-span-2">
+                  <div>
+                    <span className="text-sm text-white">{t('notifications.amsHtTemperatureHigh')}</span>
+                    <span className="text-xs text-bambu-gray ml-1">{t('notifications.amsHtTemperatureHighDescription')}</span>
+                  </div>
+                  <Toggle checked={onAmsHtTemperatureHigh} onChange={setOnAmsHtTemperatureHigh} />
+                </div>
+              </div>
+            </div>
+
+            {/* Queue Events */}
+            <div className="space-y-2 p-3 bg-bambu-dark rounded-lg">
+              <p className="text-xs text-bambu-gray uppercase tracking-wide mb-2">{t('notifications.printQueue')}</p>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="flex items-center justify-between col-span-2">
+                  <div>
+                    <span className="text-sm text-white">{t('notifications.jobAdded')}</span>
+                    <span className="text-xs text-bambu-gray ml-1">{t('notifications.jobAddedDescription')}</span>
+                  </div>
+                  <Toggle checked={onQueueJobAdded} onChange={setOnQueueJobAdded} />
+                </div>
+                <div className="flex items-center justify-between col-span-2">
+                  <div>
+                    <span className="text-sm text-white">{t('notifications.jobAssigned')}</span>
+                    <span className="text-xs text-bambu-gray ml-1">{t('notifications.jobAssignedDescription')}</span>
+                  </div>
+                  <Toggle checked={onQueueJobAssigned} onChange={setOnQueueJobAssigned} />
+                </div>
+                <div className="flex items-center justify-between col-span-2">
+                  <div>
+                    <span className="text-sm text-white">{t('notifications.jobStarted')}</span>
+                    <span className="text-xs text-bambu-gray ml-1">{t('notifications.jobStartedDescription')}</span>
+                  </div>
+                  <Toggle checked={onQueueJobStarted} onChange={setOnQueueJobStarted} />
+                </div>
+                <div className="flex items-center justify-between col-span-2">
+                  <div>
+                    <span className="text-sm text-white">{t('notifications.jobWaiting')}</span>
+                    <span className="text-xs text-bambu-gray ml-1">{t('notifications.jobWaitingDescription')}</span>
+                  </div>
+                  <Toggle checked={onQueueJobWaiting} onChange={setOnQueueJobWaiting} />
+                </div>
+                <div className="flex items-center justify-between col-span-2">
+                  <div>
+                    <span className="text-sm text-white">{t('notifications.jobSkipped')}</span>
+                    <span className="text-xs text-bambu-gray ml-1">{t('notifications.jobSkippedDescription')}</span>
+                  </div>
+                  <Toggle checked={onQueueJobSkipped} onChange={setOnQueueJobSkipped} />
+                </div>
+                <div className="flex items-center justify-between col-span-2">
+                  <div>
+                    <span className="text-sm text-white">{t('notifications.jobFailed')}</span>
+                    <span className="text-xs text-bambu-gray ml-1">{t('notifications.jobFailedDescription')}</span>
+                  </div>
+                  <Toggle checked={onQueueJobFailed} onChange={setOnQueueJobFailed} />
+                </div>
+                <div className="flex items-center justify-between col-span-2">
+                  <div>
+                    <span className="text-sm text-white">{t('notifications.queueComplete')}</span>
+                    <span className="text-xs text-bambu-gray ml-1">{t('notifications.queueCompleteDescription')}</span>
+                  </div>
+                  <Toggle checked={onQueueCompleted} onChange={setOnQueueCompleted} />
                 </div>
               </div>
             </div>
