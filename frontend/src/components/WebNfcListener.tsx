@@ -25,8 +25,6 @@ interface NdefReaderConstructorLike {
   new (): NdefReaderLike;
 }
 
-const MODAL_AUTO_HIDE_MS = 8000;
-
 function normalizeHexTag(value: string | null | undefined): string {
   if (!value) return '';
   return value.replace(/[^0-9a-f]/gi, '').toUpperCase();
@@ -52,31 +50,26 @@ function uidMatches(scannedUid: string | null | undefined, storedUid: string | n
     return false;
   }
 
-  if (scanned === stored) {
-    return true;
-  }
-
-  if (stored.length > scanned.length && stored.endsWith(scanned)) {
-    return true;
-  }
-
-  if (scanned.length > stored.length && scanned.endsWith(stored)) {
-    return true;
-  }
-
-  if (scanned.length >= 8 && stored.endsWith(scanned.slice(-8))) {
-    return true;
-  }
-
-  if (scanned.length === stored.length && scanned.length > 1 && scanned.slice(1) === stored.slice(1)) {
-    return true;
-  }
-
-  if (scanned.length === 8 && stored.length >= 8 && scanned.slice(1) === stored.slice(0, 8).slice(1)) {
-    return true;
-  }
+  if (scanned === stored) return true;
+  if (stored.length > scanned.length && stored.endsWith(scanned)) return true;
+  if (scanned.length > stored.length && scanned.endsWith(stored)) return true;
+  if (scanned.length >= 8 && stored.endsWith(scanned.slice(-8))) return true;
+  if (scanned.length === stored.length && scanned.length > 1 && scanned.slice(1) === stored.slice(1)) return true;
+  if (scanned.length === 8 && stored.length >= 8 && scanned.slice(1) === stored.slice(0, 8).slice(1)) return true;
 
   return false;
+}
+
+function SpoolCircle({ color, size = 64 }: { color: string; size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" className="shrink-0">
+      <circle cx="32" cy="32" r="30" fill={color} />
+      <circle cx="32" cy="32" r="22" fill={color} style={{ filter: 'brightness(0.82)' }} />
+      <ellipse cx="23" cy="23" rx="7" ry="5" fill="white" opacity="0.25" />
+      <circle cx="32" cy="32" r="9" fill="#27272a" />
+      <circle cx="32" cy="32" r="5.5" fill="#18181b" />
+    </svg>
+  );
 }
 
 export function WebNfcListener() {
@@ -94,36 +87,17 @@ export function WebNfcListener() {
   });
 
   const matchedSpool = useMemo<InventorySpool | null>(() => {
-    if (!lastRead) {
-      return null;
-    }
-
+    if (!lastRead) return null;
     return spools.find((spool) => uidMatches(lastRead.serialNumber, spool.tag_uid)) ?? null;
   }, [lastRead, spools]);
 
   const readerRef = useRef<NdefReaderLike | null>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const hideTimeoutRef = useRef<number | null>(null);
   const startScanRef = useRef<(() => Promise<void>) | null>(null);
 
-  const clearHideTimeout = useCallback(() => {
-    if (hideTimeoutRef.current) {
-      window.clearTimeout(hideTimeoutRef.current);
-      hideTimeoutRef.current = null;
-    }
-  }, []);
-
   const closeModal = useCallback(() => {
-    clearHideTimeout();
     setIsModalOpen(false);
-  }, [clearHideTimeout]);
-
-  const scheduleAutoHide = useCallback(() => {
-    clearHideTimeout();
-    hideTimeoutRef.current = window.setTimeout(() => {
-      setIsModalOpen(false);
-    }, MODAL_AUTO_HIDE_MS);
-  }, [clearHideTimeout]);
+  }, []);
 
   const stopScan = useCallback(() => {
     abortRef.current?.abort();
@@ -131,8 +105,7 @@ export function WebNfcListener() {
     readerRef.current = null;
     setStatus('off');
     setIsModalOpen(false);
-    clearHideTimeout();
-  }, [clearHideTimeout]);
+  }, []);
 
   const startScan = useCallback(async () => {
     const ReaderCtor = (window as unknown as { NDEFReader?: NdefReaderConstructorLike }).NDEFReader;
@@ -153,7 +126,6 @@ export function WebNfcListener() {
           readAt: Date.now(),
         });
         setIsModalOpen(true);
-        scheduleAutoHide();
       };
       reader.onreadingerror = null;
 
@@ -168,7 +140,7 @@ export function WebNfcListener() {
       }
       setStatus('error');
     }
-  }, [scheduleAutoHide]);
+  }, []);
 
   useEffect(() => {
     startScanRef.current = startScan;
@@ -191,12 +163,11 @@ export function WebNfcListener() {
 
     return () => {
       document.removeEventListener('visibilitychange', onVisibilityChange);
-      clearHideTimeout();
       abortRef.current?.abort();
       abortRef.current = null;
       readerRef.current = null;
     };
-  }, [clearHideTimeout, enabled, startScan, stopScan]);
+  }, [enabled, startScan, stopScan]);
 
   const toggleEnabled = useCallback(() => {
     setEnabled((prev) => !prev);
@@ -214,6 +185,15 @@ export function WebNfcListener() {
   if (status === 'unsupported') {
     return null;
   }
+
+  const spoolColor = matchedSpool?.rgba ? `#${matchedSpool.rgba.slice(0, 6)}` : '#71717a';
+  const remaining = matchedSpool
+    ? Math.max(0, Math.round(matchedSpool.label_weight - (matchedSpool.weight_used || 0)))
+    : 0;
+  const pct = matchedSpool && matchedSpool.label_weight > 0
+    ? Math.min(100, Math.round((remaining / matchedSpool.label_weight) * 100))
+    : 0;
+  const fillColor = pct > 50 ? '#22c55e' : pct > 20 ? '#eab308' : '#ef4444';
 
   return (
     <>
@@ -259,32 +239,55 @@ export function WebNfcListener() {
 
             {/* Body */}
             <div className="px-5 pb-5 space-y-4">
-              {/* Tag UID */}
-              <div className="flex items-center justify-between bg-zinc-900/60 rounded-xl px-4 py-3">
-                <span className="text-xs text-zinc-500 uppercase tracking-wide">Tag UID</span>
-                <span className="font-mono text-xs text-zinc-300">{lastRead.serialNumber}</span>
-              </div>
-
-              {/* Matched spool info */}
               {matchedSpool ? (
-                <div className="rounded-xl border border-bambu-green/30 bg-bambu-green/10 px-4 py-3 space-y-1">
-                  <p className="text-[10px] font-semibold uppercase tracking-wide text-bambu-green">Matched Spool</p>
-                  <p className="text-sm font-semibold text-zinc-100">
-                    {matchedSpool.brand ? `${matchedSpool.brand} ` : ''}
-                    {matchedSpool.material}
-                    {matchedSpool.subtype ? ` ${matchedSpool.subtype}` : ''}
-                  </p>
-                  <p className="text-xs text-zinc-400">
-                    {matchedSpool.color_name || 'Unknown color'}
-                    {typeof matchedSpool.label_weight === 'number'
-                      ? ` · ${Math.max(0, Math.round(matchedSpool.label_weight - (matchedSpool.weight_used || 0)))}g remaining`
-                      : ''}
-                  </p>
-                </div>
+                <>
+                  {/* Spool visual + main info */}
+                  <div className="flex items-center gap-4">
+                    <SpoolCircle color={spoolColor} size={64} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-base font-semibold text-zinc-100 leading-tight">
+                        {matchedSpool.color_name || 'Unknown color'}
+                      </p>
+                      <p className="text-sm text-zinc-400 mt-0.5">
+                        {[matchedSpool.brand, matchedSpool.material, matchedSpool.subtype].filter(Boolean).join(' · ')}
+                      </p>
+                      {/* Remaining bar */}
+                      <div className="mt-2.5">
+                        <div className="flex items-baseline gap-1.5 mb-1">
+                          <span className="text-lg font-bold font-mono text-zinc-100">{remaining}g</span>
+                          <span className="text-xs text-zinc-500">/ {matchedSpool.label_weight}g</span>
+                          <span className="text-xs font-medium ml-auto" style={{ color: fillColor }}>{pct}%</span>
+                        </div>
+                        <div className="h-1.5 bg-zinc-700 rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{ width: `${pct}%`, backgroundColor: fillColor }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tag UID */}
+                  <div className="flex items-center justify-between bg-zinc-900/60 rounded-xl px-4 py-2.5">
+                    <span className="text-xs text-zinc-500 uppercase tracking-wide">Tag UID</span>
+                    <span className="font-mono text-xs text-zinc-400">{lastRead.serialNumber}</span>
+                  </div>
+                </>
               ) : (
-                <div className="rounded-xl bg-zinc-900/60 px-4 py-3 text-xs text-zinc-500 text-center">
-                  No spool linked to this tag
-                </div>
+                <>
+                  {/* Unknown tag */}
+                  <div className="flex flex-col items-center py-2 gap-2">
+                    <div className="w-14 h-14 rounded-2xl bg-zinc-700/60 flex items-center justify-center">
+                      <Nfc className="w-7 h-7 text-zinc-500" />
+                    </div>
+                    <p className="text-xs text-zinc-500">No spool linked to this tag</p>
+                  </div>
+                  <div className="flex items-center justify-between bg-zinc-900/60 rounded-xl px-4 py-2.5">
+                    <span className="text-xs text-zinc-500 uppercase tracking-wide">Tag UID</span>
+                    <span className="font-mono text-xs text-zinc-400">{lastRead.serialNumber}</span>
+                  </div>
+                </>
               )}
 
               {/* Actions */}
