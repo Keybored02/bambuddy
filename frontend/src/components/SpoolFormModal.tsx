@@ -736,7 +736,7 @@ export function SpoolFormModal({
                       ? 'bg-bambu-green/10 border-bambu-green/30 text-bambu-green'
                       : 'bg-bambu-dark-tertiary border-bambu-dark-tertiary text-bambu-gray-light'
                   }`}>
-                    <Nfc className={`w-3.5 h-3.5 ${pendingBulkUids.length >= quantity ? 'text-bambu-green' : scanState === 'scanning' ? 'text-bambu-green animate-pulse' : 'text-bambu-gray'}`} />
+                    <Nfc className={`w-3.5 h-3.5 ${pendingBulkUids.length >= quantity ? 'text-bambu-green' : scanState === 'scanning' ? 'text-bambu-green animate-nfc-breathe' : 'text-bambu-gray'}`} />
                     <span className="font-mono">{pendingBulkUids.length}/{quantity}</span>
                     {pendingBulkUids.length > 0 && pendingBulkUids.length < quantity && (
                       <button
@@ -815,7 +815,7 @@ export function SpoolFormModal({
                 >
                   <Nfc className={`w-4 h-4 ${
                     !nfcSupported ? 'text-bambu-gray/40'
-                      : scanState === 'scanning' ? 'text-bambu-green animate-pulse'
+                      : scanState === 'scanning' ? 'text-bambu-green animate-nfc-breathe'
                       : 'text-bambu-gray'
                   }`} />
                   {scanState === 'scanning' ? 'Scanning...' : 'Scan Tag'}

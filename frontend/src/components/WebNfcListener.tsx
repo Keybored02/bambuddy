@@ -173,7 +173,7 @@ export function WebNfcListener() {
         onClick={toggleEnabled}
         className="fixed bottom-4 left-4 z-40 flex items-center gap-2 rounded-full border border-white/10 bg-bambu-dark-secondary/90 px-3 py-2 text-xs text-bambu-gray-light shadow-lg backdrop-blur-sm transition-colors hover:bg-bambu-dark"
       >
-        <Nfc className={`h-4 w-4 ${status === 'scanning' ? 'text-status-ok' : 'text-bambu-gray'}`} />
+        <Nfc className={`h-4 w-4 ${status === 'scanning' ? 'text-bambu-green animate-nfc-breathe' : 'text-bambu-gray'}`} />
         <span>{statusText}</span>
       </button>
 

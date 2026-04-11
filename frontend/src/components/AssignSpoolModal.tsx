@@ -257,12 +257,14 @@ export function AssignSpoolModal({ isOpen, onClose, printerId, amsId, trayId, tr
           <div className="flex items-center gap-2">
             <Package className="w-5 h-5 text-bambu-green" />
             <h2 className="text-lg font-semibold text-white">{t('inventory.assignSpool')}</h2>
-            {nfcScanning && (
-              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-bambu-green/10 border border-bambu-green/30 text-[11px] text-bambu-green">
-                <Nfc className="w-3 h-3 animate-pulse" />
-                NFC
-              </span>
-            )}
+            <span className={`flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] transition-colors ${
+              nfcScanning
+                ? 'bg-bambu-green/10 border-bambu-green/30 text-bambu-green'
+                : 'bg-bambu-dark-tertiary border-bambu-dark-tertiary text-bambu-gray'
+            }`}>
+              <Nfc className={`w-3 h-3 ${nfcScanning ? 'animate-nfc-breathe' : ''}`} />
+              NFC
+            </span>
           </div>
           <button
             onClick={onClose}
