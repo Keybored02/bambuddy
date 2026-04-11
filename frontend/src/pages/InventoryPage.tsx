@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import {
@@ -435,6 +436,7 @@ function InventoryPage() {
   const { showToast } = useToast();
   const [formModal, setFormModal] = useState<{ spool?: InventorySpool | null } | null>(null);
   const [confirmAction, setConfirmAction] = useState<{ type: 'delete' | 'archive'; spoolId: number } | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Filter state
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>('active');
@@ -486,6 +488,23 @@ function InventoryPage() {
     queryFn: () => api.getAssignments(),
     refetchInterval: 30000,
   });
+
+  // Open edit modal from ?spool=<id> URL param (e.g. navigated from NFC tag read)
+  useEffect(() => {
+    const spoolParam = searchParams.get('spool');
+    if (!spoolParam || !spools) return;
+    const id = parseInt(spoolParam, 10);
+    if (isNaN(id)) return;
+    const target = spools.find(s => s.id === id);
+    if (target) {
+      setFormModal({ spool: target });
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev);
+        next.delete('spool');
+        return next;
+      }, { replace: true });
+    }
+  }, [searchParams, spools, setSearchParams]);
 
   const { data: catalogEntries } = useQuery({
     queryKey: ['spool-catalog'],

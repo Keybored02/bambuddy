@@ -1,42 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Nfc, X, AlertTriangle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Nfc, X, Package } from 'lucide-react';
 import { api, type InventorySpool } from '../api/client';
 
 type NfcStatus = 'unsupported' | 'off' | 'idle' | 'scanning' | 'permission-needed' | 'error';
 
-interface NfcRecordView {
-  recordType: string;
-  mediaType?: string;
-  id?: string;
-  payload: string;
-  rawHex?: string;
-  encoding?: string;
-  lang?: string;
-}
-
 interface NfcReadView {
   serialNumber: string;
-  records: NfcRecordView[];
   readAt: number;
-}
-
-interface NdefRecordLike {
-  recordType?: string;
-  mediaType?: string;
-  id?: string;
-  data?: unknown;
-  encoding?: string;
-  lang?: string;
-}
-
-interface NdefMessageLike {
-  records?: NdefRecordLike[];
 }
 
 interface NdefReadingEventLike {
   serialNumber?: string;
-  message?: NdefMessageLike;
 }
 
 interface NdefReaderLike {
@@ -103,57 +79,12 @@ function uidMatches(scannedUid: string | null | undefined, storedUid: string | n
   return false;
 }
 
-function decodeRecordPayload(record: NdefRecordLike): string {
-  const raw = record.data;
-  if (!(raw instanceof DataView) && !(raw instanceof ArrayBuffer)) {
-    return '-';
-  }
-
-  try {
-    const dataView = raw instanceof DataView ? raw : new DataView(raw);
-    const decoder = new TextDecoder(record.encoding || 'utf-8');
-    const text = decoder.decode(dataView);
-    const trimmed = text.trim();
-    if (trimmed.length === 0) {
-      return '-';
-    }
-    return trimmed.length > 120 ? `${trimmed.slice(0, 120)}...` : trimmed;
-  } catch {
-    return '[binary payload]';
-  }
-}
-
-function toHexDump(raw: DataView | ArrayBuffer): string {
-  const bytes = raw instanceof DataView
-    ? new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength)
-    : new Uint8Array(raw);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join(' ').toUpperCase();
-}
-
-function parseReadEvent(event: NdefReadingEventLike): NfcReadView {
-  const records = (event.message?.records || []).map((record) => ({
-    recordType: record.recordType || 'unknown',
-    mediaType: record.mediaType,
-    id: record.id,
-    payload: decodeRecordPayload(record),
-    rawHex: record.data instanceof DataView || record.data instanceof ArrayBuffer ? toHexDump(record.data) : undefined,
-    encoding: record.encoding,
-    lang: record.lang,
-  }));
-
-  return {
-    serialNumber: normalizeHexTag(event.serialNumber) || 'unknown',
-    records,
-    readAt: Date.now(),
-  };
-}
-
 export function WebNfcListener() {
   const [enabled, setEnabled] = useState(true);
   const [status, setStatus] = useState<NfcStatus>('idle');
   const [lastRead, setLastRead] = useState<NfcReadView | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const navigate = useNavigate();
 
   const { data: spools = [] } = useQuery({
     queryKey: ['inventory-spools', 'web-nfc-listener'],
@@ -199,7 +130,6 @@ export function WebNfcListener() {
     abortRef.current = null;
     readerRef.current = null;
     setStatus('off');
-    setErrorMessage(null);
     setIsModalOpen(false);
     clearHideTimeout();
   }, [clearHideTimeout]);
@@ -208,7 +138,6 @@ export function WebNfcListener() {
     const ReaderCtor = (window as unknown as { NDEFReader?: NdefReaderConstructorLike }).NDEFReader;
     if (!ReaderCtor) {
       setStatus('unsupported');
-      setErrorMessage(null);
       return;
     }
 
@@ -219,49 +148,25 @@ export function WebNfcListener() {
 
       const reader = new ReaderCtor();
       reader.onreading = (event) => {
-        try {
-          const parsed = parseReadEvent(event);
-          setLastRead(parsed);
-          setIsModalOpen(true);
-          scheduleAutoHide();
-        } catch (err) {
-          // Always surface a modal for read events, even if parsing fails.
-          const fallbackSerial = normalizeHexTag(event.serialNumber) || 'unknown';
-          setLastRead({
-            serialNumber: fallbackSerial,
-            records: [],
-            readAt: Date.now(),
-          });
-          setErrorMessage(err instanceof Error ? err.message : 'Failed to parse NFC read payload.');
-          setIsModalOpen(true);
-          scheduleAutoHide();
-        }
-      };
-      reader.onreadingerror = () => {
-        setErrorMessage('NFC tag detected, but payload was not readable as NDEF.');
-        // readingerror can happen for non-NDEF / unsupported formatting. Show a modal hint.
-        setLastRead((prev) => prev ?? {
-          serialNumber: 'unknown',
-          records: [],
+        setLastRead({
+          serialNumber: normalizeHexTag(event.serialNumber) || 'unknown',
           readAt: Date.now(),
         });
         setIsModalOpen(true);
         scheduleAutoHide();
       };
+      reader.onreadingerror = null;
 
       await reader.scan({ signal: abortController.signal });
       readerRef.current = reader;
       setStatus('scanning');
-      setErrorMessage(null);
     } catch (error) {
       const name = error instanceof Error ? error.name : '';
       if (name === 'NotAllowedError' || name === 'SecurityError') {
         setStatus('permission-needed');
-        setErrorMessage('Tap "Enable NFC" to grant browser permission.');
         return;
       }
       setStatus('error');
-      setErrorMessage(error instanceof Error ? error.message : 'Unable to start NFC scanning.');
     }
   }, [scheduleAutoHide]);
 
@@ -306,27 +211,6 @@ export function WebNfcListener() {
     return 'NFC idle';
   }, [status]);
 
-  const fullReadDump = useMemo(() => {
-    if (!lastRead) {
-      return null;
-    }
-
-    return {
-      serialNumber: lastRead.serialNumber,
-      readAt: new Date(lastRead.readAt).toISOString(),
-      recordCount: lastRead.records.length,
-      records: lastRead.records.map((record) => ({
-        recordType: record.recordType,
-        mediaType: record.mediaType ?? null,
-        id: record.id ?? null,
-        encoding: record.encoding ?? null,
-        lang: record.lang ?? null,
-        payload: record.payload,
-        rawHex: record.rawHex ?? null,
-      })),
-    };
-  }, [lastRead]);
-
   if (status === 'unsupported') {
     return null;
   }
@@ -345,88 +229,89 @@ export function WebNfcListener() {
       </button>
 
       {isModalOpen && lastRead && (
-        <div className="fixed bottom-16 left-4 z-50 w-[320px] max-w-[calc(100vw-2rem)] rounded-xl border border-white/10 bg-bambu-dark-secondary p-3 shadow-2xl">
-          <div className="mb-2 flex items-start justify-between">
-            <div className="flex items-center gap-2">
-              <Nfc className="h-4 w-4 text-bambu-green" />
-              <h3 className="text-sm font-semibold text-white">NFC tag read</h3>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+          onClick={closeModal}
+        >
+          <div
+            className="bg-zinc-800 rounded-2xl shadow-2xl w-full max-w-sm mx-4 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 pt-5 pb-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-bambu-green/15 flex items-center justify-center">
+                  <Nfc className="h-4 w-4 text-bambu-green" />
+                </div>
+                <h3 className="text-base font-semibold text-white">
+                  {matchedSpool ? 'Spool Detected' : 'NFC Tag Read'}
+                </h3>
+              </div>
+              <button
+                type="button"
+                aria-label="Close NFC modal"
+                onClick={closeModal}
+                className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700 transition-colors"
+              >
+                <X className="h-4 w-4" />
+              </button>
             </div>
-            <button
-              type="button"
-              aria-label="Close NFC modal"
-              onClick={closeModal}
-              className="rounded p-1 text-bambu-gray hover:bg-white/10 hover:text-white"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
 
-          <div className="space-y-1 text-xs text-bambu-gray-light">
-            <p>
-              <span className="text-bambu-gray">Serial:</span> {lastRead.serialNumber}
-            </p>
-            {matchedSpool && (
-              <div className="rounded-lg border border-green-500/30 bg-green-500/10 px-2 py-1.5">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-green-300">Matched spool</p>
-                <p className="text-[12px] font-semibold text-zinc-100">
-                  #{matchedSpool.id} {matchedSpool.brand ? `${matchedSpool.brand} ` : ''}{matchedSpool.material}
-                  {matchedSpool.subtype ? ` ${matchedSpool.subtype}` : ''}
-                </p>
-                <p className="text-[10px] text-zinc-300">
-                  {matchedSpool.color_name || 'Unknown color'}
-                  {typeof matchedSpool.label_weight === 'number'
-                    ? ` • ${Math.max(0, Math.round(matchedSpool.label_weight - (matchedSpool.weight_used || 0)))}g left`
-                    : ''}
-                </p>
+            {/* Body */}
+            <div className="px-5 pb-5 space-y-4">
+              {/* Tag UID */}
+              <div className="flex items-center justify-between bg-zinc-900/60 rounded-xl px-4 py-3">
+                <span className="text-xs text-zinc-500 uppercase tracking-wide">Tag UID</span>
+                <span className="font-mono text-xs text-zinc-300">{lastRead.serialNumber}</span>
               </div>
-            )}
-            <p>
-              <span className="text-bambu-gray">Records:</span> {lastRead.records.length}
-            </p>
-            {lastRead.records.length === 0 && (
-              <div className="rounded bg-amber-500/10 px-2 py-1 text-amber-200">
-                No NDEF records were exposed by Web NFC.
-              </div>
-            )}
-            {lastRead.records.slice(0, 3).map((record, index) => (
-              <div key={`${record.recordType}-${record.id || index}`} className="rounded bg-bambu-dark px-2 py-1">
-                <p className="text-[11px] text-bambu-gray">
-                  {record.recordType}
-                  {record.mediaType ? ` (${record.mediaType})` : ''}
-                </p>
-                <p className="truncate text-zinc-100" title={record.payload}>{record.payload}</p>
-                {(record.encoding || record.lang || record.rawHex) && (
-                  <p className="mt-0.5 text-[10px] text-bambu-gray">
-                    {record.encoding ? `enc=${record.encoding}` : ''}
-                    {record.lang ? `${record.encoding ? ' ' : ''}lang=${record.lang}` : ''}
+
+              {/* Matched spool info */}
+              {matchedSpool ? (
+                <div className="rounded-xl border border-bambu-green/30 bg-bambu-green/10 px-4 py-3 space-y-1">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-bambu-green">Matched Spool</p>
+                  <p className="text-sm font-semibold text-zinc-100">
+                    {matchedSpool.brand ? `${matchedSpool.brand} ` : ''}
+                    {matchedSpool.material}
+                    {matchedSpool.subtype ? ` ${matchedSpool.subtype}` : ''}
                   </p>
-                )}
-                {record.rawHex && (
-                  <p className="mt-1 truncate font-mono text-[10px] text-zinc-400" title={record.rawHex}>
-                    {record.rawHex}
+                  <p className="text-xs text-zinc-400">
+                    {matchedSpool.color_name || 'Unknown color'}
+                    {typeof matchedSpool.label_weight === 'number'
+                      ? ` · ${Math.max(0, Math.round(matchedSpool.label_weight - (matchedSpool.weight_used || 0)))}g remaining`
+                      : ''}
                   </p>
+                </div>
+              ) : (
+                <div className="rounded-xl bg-zinc-900/60 px-4 py-3 text-xs text-zinc-500 text-center">
+                  No spool linked to this tag
+                </div>
+              )}
+
+              {/* Actions */}
+              <div className="flex gap-2 pt-1">
+                {matchedSpool && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      closeModal();
+                      navigate(`/inventory?spool=${matchedSpool.id}`);
+                    }}
+                    className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium bg-bambu-green text-white hover:bg-bambu-green/90 transition-colors"
+                  >
+                    <Package className="h-4 w-4" />
+                    Go to Inventory
+                  </button>
                 )}
+                <button
+                  type="button"
+                  onClick={closeModal}
+                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium bg-zinc-700 text-zinc-300 hover:bg-zinc-600 transition-colors"
+                >
+                  Close
+                </button>
               </div>
-            ))}
+            </div>
           </div>
-
-          {fullReadDump && (
-            <details className="mt-3 rounded-lg border border-white/10 bg-black/20 px-2 py-2 text-xs text-bambu-gray-light">
-              <summary className="cursor-pointer list-none text-bambu-gray-light hover:text-white">
-                Full Web NFC dump
-              </summary>
-              <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded bg-black/30 p-2 font-mono text-[10px] text-zinc-200">
-{JSON.stringify(fullReadDump, null, 2)}
-              </pre>
-            </details>
-          )}
-        </div>
-      )}
-
-      {errorMessage && status !== 'permission-needed' && (
-        <div className="fixed bottom-16 left-4 z-40 flex max-w-sm items-center gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-          <span>{errorMessage}</span>
         </div>
       )}
     </>

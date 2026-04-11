@@ -1,6 +1,7 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router-dom';
 import { Search, X, Package } from 'lucide-react';
 import { api } from '../../api/client';
 import type { InventorySpool, SpoolAssignment } from '../../api/client';
@@ -53,6 +54,27 @@ export function SpoolBuddyInventoryPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterMode, setFilterMode] = useState<FilterMode>('all');
   const [selectedSpoolId, setSelectedSpoolId] = useState<number | null>(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Open spool from ?spool=<id> URL param
+  useEffect(() => {
+    const spoolParam = searchParams.get('spool');
+    if (spoolParam) {
+      const id = parseInt(spoolParam, 10);
+      if (!isNaN(id)) setSelectedSpoolId(id);
+    }
+  }, [searchParams]);
+
+  const handleCloseDetail = () => {
+    setSelectedSpoolId(null);
+    if (searchParams.has('spool')) {
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev);
+        next.delete('spool');
+        return next;
+      });
+    }
+  };
 
   const { data: spoolmanSettings } = useQuery({
     queryKey: ['spoolman-settings'],
@@ -224,7 +246,7 @@ export function SpoolBuddyInventoryPage() {
           <SpoolDetailModal
             spool={liveSpool}
             assignment={assignmentMap[liveSpool.id]}
-            onClose={() => setSelectedSpoolId(null)}
+            onClose={handleCloseDetail}
           />
         );
       })()}
