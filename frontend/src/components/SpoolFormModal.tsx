@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { X, Loader2, Save, Beaker, Palette, Zap, Tag, Nfc } from 'lucide-react';
+import { X, Loader2, Save, Beaker, Palette, Zap, Nfc } from 'lucide-react';
 import { api } from '../api/client';
 import type { InventorySpool, SlicerSetting, SpoolCatalogEntry, LocalPreset } from '../api/client';
 import { normalizeHexTag, uidMatches, suppressNfcModal, unsuppressNfcModal } from '../utils/nfc';
@@ -632,6 +632,11 @@ export function SpoolFormModal({
   if (!isOpen) return null;
 
   const handleSubmit = () => {
+    if (isBulkIncomplete) {
+      showToast(`Scan all ${quantity} tags before saving (${pendingBulkUids.length}/${quantity} done)`, 'error');
+      return;
+    }
+
     const validation = validateForm(formData, quickAdd);
     if (!validation.isValid) {
       setErrors(validation.errors);
@@ -705,6 +710,7 @@ export function SpoolFormModal({
   };
 
   const isPending = createMutation.isPending || bulkCreateMutation.isPending || bulkNfcCreateMutation.isPending || updateMutation.isPending;
+  const isBulkIncomplete = isBulkNfcMode && pendingBulkUids.length < quantity;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -720,107 +726,102 @@ export function SpoolFormModal({
             {isEditing ? t('inventory.editSpool') : t('inventory.addSpool')}
           </h2>
           <div className="flex items-center gap-1">
-            {/* NFC widget — create mode only */}
-            {!isEditing && (
-              <div className="flex items-center gap-1.5 mr-1">
-                {isBulkNfcMode ? (
-                  /* Bulk mode: show x/total counter + scan/stop control */
-                  <div className="flex items-center gap-1.5">
-                    {/* Counter badge */}
-                    <div className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 border text-xs font-medium ${
-                      pendingBulkUids.length >= quantity
-                        ? 'bg-bambu-green/10 border-bambu-green/30 text-bambu-green'
-                        : 'bg-bambu-dark-tertiary border-bambu-dark-tertiary text-bambu-gray-light'
-                    }`}>
-                      <Nfc className={`w-3.5 h-3.5 ${pendingBulkUids.length >= quantity ? 'text-bambu-green' : scanState === 'scanning' ? 'text-bambu-green animate-pulse' : 'text-bambu-gray'}`} />
-                      <span className="font-mono">{pendingBulkUids.length}/{quantity}</span>
-                      {pendingBulkUids.length > 0 && pendingBulkUids.length < quantity && (
-                        <button
-                          type="button"
-                          onClick={() => setPendingBulkUids([])}
-                          className="text-bambu-gray/60 hover:text-bambu-gray transition-colors ml-0.5"
-                          title="Clear all scanned tags"
-                        >
-                          <X className="w-3 h-3" />
-                        </button>
-                      )}
-                    </div>
-                    {/* Scan / stop button */}
-                    {pendingBulkUids.length < quantity && (
-                      scanState === 'scanning' ? (
-                        <button
-                          type="button"
-                          onClick={stopScan}
-                          className="flex items-center gap-1 px-2 py-1 rounded-lg border border-bambu-green/50 bg-bambu-green/10 text-bambu-green text-xs font-medium"
-                          title="Stop scanning"
-                        >
-                          <X className="w-3 h-3" />
-                          Stop
-                        </button>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={startScan}
-                          disabled={!nfcSupported}
-                          className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-medium transition-colors ${
-                            !nfcSupported
-                              ? 'border-bambu-dark-tertiary text-bambu-gray/40 cursor-not-allowed'
-                              : 'border-bambu-dark-tertiary text-bambu-gray hover:border-bambu-green/50 hover:text-bambu-green'
-                          }`}
-                          title={!nfcSupported ? 'Web NFC not supported' : 'Start scanning tags'}
-                        >
-                          <Nfc className="w-3.5 h-3.5" />
-                          Scan
-                        </button>
-                      )
-                    )}
-                  </div>
-                ) : (
-                  /* Single mode: show UID pill or scan button */
-                  pendingTagUid ? (
-                    <div className="flex items-center gap-1.5 bg-bambu-green/10 border border-bambu-green/30 rounded-lg px-2.5 py-1">
-                      <Nfc className="w-4 h-4 text-bambu-green shrink-0" />
-                      <span className="font-mono text-[11px] text-bambu-green max-w-[100px] truncate" title={pendingTagUid}>
-                        {pendingTagUid}
-                      </span>
+            {/* NFC widget — both create and edit modes */}
+            <div className="flex items-center gap-1.5 mr-1">
+              {isBulkNfcMode ? (
+                /* Bulk mode: x/total counter + scan/stop control */
+                <div className="flex items-center gap-1.5">
+                  <div className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1 border text-xs font-medium ${
+                    pendingBulkUids.length >= quantity
+                      ? 'bg-bambu-green/10 border-bambu-green/30 text-bambu-green'
+                      : 'bg-bambu-dark-tertiary border-bambu-dark-tertiary text-bambu-gray-light'
+                  }`}>
+                    <Nfc className={`w-3.5 h-3.5 ${pendingBulkUids.length >= quantity ? 'text-bambu-green' : scanState === 'scanning' ? 'text-bambu-green animate-pulse' : 'text-bambu-gray'}`} />
+                    <span className="font-mono">{pendingBulkUids.length}/{quantity}</span>
+                    {pendingBulkUids.length > 0 && pendingBulkUids.length < quantity && (
                       <button
                         type="button"
-                        onClick={() => { setPendingTagUid(null); stopScan(); }}
-                        className="text-bambu-green/60 hover:text-bambu-green transition-colors ml-0.5"
-                        title="Remove scanned tag"
+                        onClick={() => setPendingBulkUids([])}
+                        className="text-bambu-gray/60 hover:text-bambu-gray transition-colors ml-0.5"
+                        title="Clear all scanned tags"
                       >
                         <X className="w-3 h-3" />
                       </button>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={startScan}
-                      disabled={!nfcSupported || scanState === 'scanning'}
-                      title={
-                        !nfcSupported ? 'Web NFC not supported on this device'
-                          : scanState === 'scanning' ? 'Scanning for NFC tag...'
-                          : 'Scan NFC tag to assign to spool'
-                      }
-                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
-                        !nfcSupported
-                          ? 'border-bambu-dark-tertiary text-bambu-gray/40 cursor-not-allowed'
-                          : scanState === 'scanning'
-                            ? 'border-bambu-green/50 text-bambu-green bg-bambu-green/10 cursor-default'
+                    )}
+                  </div>
+                  {pendingBulkUids.length < quantity && (
+                    scanState === 'scanning' ? (
+                      <button
+                        type="button"
+                        onClick={stopScan}
+                        className="flex items-center gap-1 px-2 py-1 rounded-lg border border-bambu-green/50 bg-bambu-green/10 text-bambu-green text-xs font-medium"
+                        title="Stop scanning"
+                      >
+                        <X className="w-3 h-3" />
+                        Stop
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={startScan}
+                        disabled={!nfcSupported}
+                        className={`flex items-center gap-1 px-2 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                          !nfcSupported
+                            ? 'border-bambu-dark-tertiary text-bambu-gray/40 cursor-not-allowed'
                             : 'border-bambu-dark-tertiary text-bambu-gray hover:border-bambu-green/50 hover:text-bambu-green'
-                      }`}
-                    >
-                      <Nfc className={`w-4 h-4 ${
-                        !nfcSupported ? 'text-bambu-gray/40'
-                          : scanState === 'scanning' ? 'text-bambu-green animate-pulse'
-                          : 'text-bambu-gray'
-                      }`} />
-                      {scanState === 'scanning' ? 'Scanning...' : 'Scan Tag'}
-                    </button>
-                  )
-                )}
-              </div>
-            )}
+                        }`}
+                        title={!nfcSupported ? 'Web NFC not supported' : 'Start scanning tags'}
+                      >
+                        <Nfc className="w-3.5 h-3.5" />
+                        Scan
+                      </button>
+                    )
+                  )}
+                </div>
+              ) : pendingTagUid ? (
+                /* Tag assigned: green pill + X to unassign (local only, committed on save) */
+                <div className="flex items-center gap-1.5 bg-bambu-green/10 border border-bambu-green/30 rounded-lg px-2.5 py-1">
+                  <Nfc className="w-4 h-4 text-bambu-green shrink-0" />
+                  <span className="font-mono text-[11px] text-bambu-green max-w-[100px] truncate" title={pendingTagUid}>
+                    {pendingTagUid.slice(-8)}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setPendingTagUid(null); stopScan(); }}
+                    className="text-bambu-green/60 hover:text-bambu-green transition-colors ml-0.5"
+                    title="Unassign tag (saved on submit)"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ) : (
+                /* No tag: scan button */
+                <button
+                  type="button"
+                  onClick={startScan}
+                  disabled={!nfcSupported || scanState === 'scanning'}
+                  title={
+                    !nfcSupported ? 'Web NFC not supported on this device'
+                      : scanState === 'scanning' ? 'Scanning for NFC tag...'
+                      : 'Scan NFC tag to assign to spool'
+                  }
+                  className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium transition-colors ${
+                    !nfcSupported
+                      ? 'border-bambu-dark-tertiary text-bambu-gray/40 cursor-not-allowed'
+                      : scanState === 'scanning'
+                        ? 'border-bambu-green/50 text-bambu-green bg-bambu-green/10 cursor-default'
+                        : 'border-bambu-dark-tertiary text-bambu-gray hover:border-bambu-green/50 hover:text-bambu-green'
+                  }`}
+                >
+                  <Nfc className={`w-4 h-4 ${
+                    !nfcSupported ? 'text-bambu-gray/40'
+                      : scanState === 'scanning' ? 'text-bambu-green animate-pulse'
+                      : 'text-bambu-gray'
+                  }`} />
+                  {scanState === 'scanning' ? 'Scanning...' : 'Scan Tag'}
+                </button>
+              )}
+            </div>
             <button
               onClick={onClose}
               className="p-1 text-bambu-gray hover:text-white rounded transition-colors"
@@ -965,42 +966,14 @@ export function SpoolFormModal({
 
         {/* Footer */}
         <div className="flex gap-2 p-4 border-t border-bambu-dark-tertiary flex-shrink-0">
-          {isEditing && (
-            <div className="flex gap-2 mr-auto">
-              {/* NFC tag area — driven by local pendingTagUid, saved on submit */}
-              {pendingTagUid ? (
-                <Button
-                  variant="secondary"
-                  onClick={() => { setPendingTagUid(null); stopScan(); }}
-                  disabled={isPending}
-                  title={pendingTagUid}
-                >
-                  <Tag className="w-4 h-4" />
-                  <span className="font-mono text-[11px]">{pendingTagUid.slice(-8)}</span>
-                  <X className="w-3 h-3 opacity-60" />
-                </Button>
-              ) : (
-                <Button
-                  variant="secondary"
-                  onClick={startScan}
-                  disabled={isPending || !nfcSupported || scanState === 'scanning'}
-                  title={!nfcSupported ? 'Web NFC not supported on this device' : 'Scan NFC tag to link to spool'}
-                >
-                  <Nfc className={`w-4 h-4 ${scanState === 'scanning' ? 'text-bambu-green animate-pulse' : ''}`} />
-                  {scanState === 'scanning'
-                    ? t('inventory.scanning', 'Scanning...')
-                    : t('inventory.scanTag', 'Scan Tag')}
-                </Button>
-              )}
-            </div>
-          )}
           <div className="flex gap-2 ml-auto">
           <Button variant="secondary" onClick={onClose}>
             {t('common.cancel')}
           </Button>
           <Button
             onClick={handleSubmit}
-            disabled={isPending}
+            disabled={isPending || isBulkIncomplete}
+            title={isBulkIncomplete ? `Scan all ${quantity} tags first (${pendingBulkUids.length}/${quantity} done)` : undefined}
           >
             {isPending ? (
               <>
