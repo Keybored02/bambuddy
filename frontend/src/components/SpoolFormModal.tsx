@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { X, Loader2, Save, Beaker, Palette, Zap, Nfc } from 'lucide-react';
+import { X, Loader2, Save, Beaker, Palette, Zap } from 'lucide-react';
+import { NfcIcon } from './NfcIcon';
 import { api } from '../api/client';
 import type { InventorySpool, SlicerSetting, SpoolCatalogEntry, LocalPreset } from '../api/client';
 import { normalizeHexTag, uidMatches, suppressNfcModal, unsuppressNfcModal } from '../utils/nfc';
@@ -736,7 +737,7 @@ export function SpoolFormModal({
                       ? 'bg-bambu-green/10 border-bambu-green/30 text-bambu-green'
                       : 'bg-bambu-dark-tertiary border-bambu-dark-tertiary text-bambu-gray-light'
                   }`}>
-                    <Nfc className={`w-3.5 h-3.5 ${pendingBulkUids.length >= quantity ? 'text-bambu-green' : scanState === 'scanning' ? 'text-bambu-green animate-nfc-breathe' : 'text-bambu-gray'}`} />
+                    <NfcIcon size={14} scanning={scanState === 'scanning' && pendingBulkUids.length < quantity} className={pendingBulkUids.length >= quantity ? 'text-bambu-green' : scanState === 'scanning' ? 'text-bambu-green' : 'text-bambu-gray'} />
                     <span className="font-mono">{pendingBulkUids.length}/{quantity}</span>
                     {pendingBulkUids.length > 0 && pendingBulkUids.length < quantity && (
                       <button
@@ -772,7 +773,7 @@ export function SpoolFormModal({
                         }`}
                         title={!nfcSupported ? 'Web NFC not supported' : 'Start scanning tags'}
                       >
-                        <Nfc className="w-3.5 h-3.5" />
+                        <NfcIcon size={14} />
                         Scan
                       </button>
                     )
@@ -781,9 +782,9 @@ export function SpoolFormModal({
               ) : pendingTagUid ? (
                 /* Tag assigned: green pill + X to unassign (local only, committed on save) */
                 <div className="flex items-center gap-1.5 bg-bambu-green/10 border border-bambu-green/30 rounded-lg px-2.5 py-1">
-                  <Nfc className="w-4 h-4 text-bambu-green shrink-0" />
+                  <NfcIcon size={16} className="text-bambu-green shrink-0" />
                   <span className="font-mono text-[11px] text-bambu-green max-w-[100px] truncate" title={pendingTagUid}>
-                    {pendingTagUid.slice(-8)}
+                    {pendingTagUid.slice(0, 8)}
                   </span>
                   <button
                     type="button"
@@ -813,11 +814,11 @@ export function SpoolFormModal({
                         : 'border-bambu-dark-tertiary text-bambu-gray hover:border-bambu-green/50 hover:text-bambu-green'
                   }`}
                 >
-                  <Nfc className={`w-4 h-4 ${
-                    !nfcSupported ? 'text-bambu-gray/40'
-                      : scanState === 'scanning' ? 'text-bambu-green animate-nfc-breathe'
-                      : 'text-bambu-gray'
-                  }`} />
+                  <NfcIcon
+                    size={16}
+                    scanning={scanState === 'scanning'}
+                    className={!nfcSupported ? 'text-bambu-gray/40' : scanState === 'scanning' ? 'text-bambu-green' : 'text-bambu-gray'}
+                  />
                   {scanState === 'scanning' ? 'Scanning...' : 'Scan Tag'}
                 </button>
               )}

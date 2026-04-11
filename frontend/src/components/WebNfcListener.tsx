@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { Nfc, X, Package } from 'lucide-react';
+import { X, Package } from 'lucide-react';
+import { NfcIcon } from './NfcIcon';
 import { api, type InventorySpool } from '../api/client';
 import { normalizeHexTag, uidMatches, isNfcModalSuppressed } from '../utils/nfc';
 
@@ -173,7 +174,7 @@ export function WebNfcListener() {
         onClick={toggleEnabled}
         className="fixed bottom-4 left-4 z-40 flex items-center gap-2 rounded-full border border-white/10 bg-bambu-dark-secondary/90 px-3 py-2 text-xs text-bambu-gray-light shadow-lg backdrop-blur-sm transition-colors hover:bg-bambu-dark"
       >
-        <Nfc className={`h-4 w-4 ${status === 'scanning' ? 'text-bambu-green animate-nfc-breathe' : 'text-bambu-gray'}`} />
+        <NfcIcon size={16} scanning={status === 'scanning'} className={status === 'scanning' ? 'text-bambu-green' : 'text-bambu-gray'} />
         <span>{statusText}</span>
       </button>
 
@@ -190,7 +191,7 @@ export function WebNfcListener() {
             <div className="flex items-center justify-between px-5 pt-5 pb-4">
               <div className="flex items-center gap-2.5">
                 <div className="w-8 h-8 rounded-lg bg-bambu-green/15 flex items-center justify-center">
-                  <Nfc className="h-4 w-4 text-bambu-green" />
+                  <NfcIcon size={16} className="text-bambu-green" />
                 </div>
                 <h3 className="text-base font-semibold text-white">
                   {matchedSpool ? 'Spool Detected' : 'NFC Tag Read'}
@@ -248,7 +249,7 @@ export function WebNfcListener() {
                   {/* Unknown tag */}
                   <div className="flex flex-col items-center py-2 gap-2">
                     <div className="w-14 h-14 rounded-2xl bg-zinc-700/60 flex items-center justify-center">
-                      <Nfc className="w-7 h-7 text-zinc-500" />
+                      <NfcIcon size={28} className="text-zinc-500" />
                     </div>
                     <p className="text-xs text-zinc-500">No spool linked to this tag</p>
                   </div>

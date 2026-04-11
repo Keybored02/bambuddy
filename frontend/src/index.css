@@ -283,10 +283,17 @@ body {
   transition: background-color 0.2s ease, border-color 0.2s ease;
 }
 
-/* NFC scanning breathe animation */
+/* NFC scanning breathe animation (fallback / badge use) */
 @keyframes nfc-breathe {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.35; }
+}
+
+/* NFC wave animation — each arc pulses in sequence */
+@keyframes nfc-wave {
+  0%, 100% { opacity: 0.2; }
+  40%       { opacity: 1; }
+  70%       { opacity: 0.2; }
 }
 
 /* Toast slide-in animation */

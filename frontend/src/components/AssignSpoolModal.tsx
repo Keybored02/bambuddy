@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { X, Loader2, Package, Search, Nfc } from 'lucide-react';
+import { X, Loader2, Package, Search } from 'lucide-react';
+import { NfcIcon } from './NfcIcon';
 import { api } from '../api/client';
 import type { InventorySpool, SpoolAssignment } from '../api/client';
 import { Button } from './Button';
@@ -262,7 +263,7 @@ export function AssignSpoolModal({ isOpen, onClose, printerId, amsId, trayId, tr
                 ? 'bg-bambu-green/10 border-bambu-green/30 text-bambu-green'
                 : 'bg-bambu-dark-tertiary border-bambu-dark-tertiary text-bambu-gray'
             }`}>
-              <Nfc className={`w-3 h-3 ${nfcScanning ? 'animate-nfc-breathe' : ''}`} />
+              <NfcIcon size={12} scanning={nfcScanning} />
               NFC
             </span>
           </div>
