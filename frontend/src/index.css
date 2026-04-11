@@ -5,6 +5,8 @@
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
+  --animate-nfc-breathe: nfc-breathe 1.8s ease-in-out infinite;
+
   /* Accent colors - use CSS variables for theming */
   --color-bambu-green: var(--accent);
   --color-bambu-green-light: var(--accent-light);
@@ -279,6 +281,12 @@ body {
 .bg-bambu-dark-tertiary,
 .border-bambu-dark-tertiary {
   transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+/* NFC scanning breathe animation */
+@keyframes nfc-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
 }
 
 /* Toast slide-in animation */

@@ -5,9 +5,6 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
-  safelist: [
-    'animate-nfc-breathe',
-  ],
   theme: {
     extend: {
       colors: {
@@ -37,15 +34,10 @@ export default {
           '0%': { opacity: '0', transform: 'translateY(16px) scale(0.98)' },
           '100%': { opacity: '1', transform: 'translateY(0) scale(1)' },
         },
-        nfcBreathe: {
-          '0%, 100%': { opacity: '1' },
-          '50%': { opacity: '0.35' },
-        },
       },
       animation: {
         'fade-in': 'fadeIn 0.15s ease-out',
         'slide-up': 'slideUp 0.2s ease-out',
-        'nfc-breathe': 'nfcBreathe 1.8s ease-in-out infinite',
       },
     },
   },
