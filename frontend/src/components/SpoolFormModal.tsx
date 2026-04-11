@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { X, Loader2, Save, Beaker, Palette, Zap, Tag, Unlink, Nfc } from 'lucide-react';
+import { X, Loader2, Save, Beaker, Palette, Zap, Tag, Nfc } from 'lucide-react';
 import { api } from '../api/client';
 import type { InventorySpool, SlicerSetting, SpoolCatalogEntry, LocalPreset } from '../api/client';
+import { normalizeHexTag, suppressNfcModal, unsuppressNfcModal } from '../utils/nfc';
 import { Button } from './Button';
 import { useToast } from '../contexts/ToastContext';
 import type { SpoolFormData, PrinterWithCalibrations, ColorPreset } from './spool-form/types';
@@ -28,32 +29,31 @@ interface NdefReaderConstructorLike {
   };
 }
 
-function useNfcScan(isOpen: boolean) {
+function useNfcScan(isOpen: boolean, onScanned: (uid: string) => void) {
   const [scanState, setScanState] = useState<NfcScanState>('idle');
-  const [scannedUid, setScannedUid] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const onScannedRef = useRef(onScanned);
+  useEffect(() => { onScannedRef.current = onScanned; }, [onScanned]);
 
   const isSupported = typeof window !== 'undefined' &&
     !!(window as unknown as { NDEFReader?: unknown }).NDEFReader;
 
   const startScan = useCallback(async () => {
     const ReaderCtor = (window as unknown as { NDEFReader?: NdefReaderConstructorLike }).NDEFReader;
-    if (!ReaderCtor) {
-      setScanState('unsupported');
-      return;
-    }
+    if (!ReaderCtor) { setScanState('unsupported'); return; }
     abortRef.current?.abort();
     const ac = new AbortController();
     abortRef.current = ac;
     setScanState('scanning');
-    setScannedUid(null);
+    suppressNfcModal();
     try {
       const reader = new ReaderCtor();
       reader.onreading = (event) => {
-        const raw = event.serialNumber ?? '';
-        const uid = raw.replace(/[^0-9a-f]/gi, '').toUpperCase();
-        setScannedUid(uid || raw);
+        const uid = normalizeHexTag(event.serialNumber) || (event.serialNumber ?? '');
+        onScannedRef.current(uid);
         setScanState('done');
+        // Keep suppressed — stopScan / modal close will unsuppress.
+        // Aborting here stops further reads on this one-shot reader.
         ac.abort();
       };
       reader.onreadingerror = () => {
@@ -62,29 +62,28 @@ function useNfcScan(isOpen: boolean) {
       };
       await reader.scan({ signal: ac.signal });
     } catch (e) {
-      if ((e as Error)?.name === 'AbortError') return;
-      setScanState('error');
+      // AbortError is expected after a successful read or stopScan — not an error.
+      if ((e as Error)?.name !== 'AbortError') {
+        setScanState('error');
+        unsuppressNfcModal();
+      }
     }
   }, []);
 
-  const clearScan = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-    setScannedUid(null);
+  const stopScan = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+      abortRef.current = null;
+    }
+    unsuppressNfcModal();
     setScanState(isSupported ? 'idle' : 'unsupported');
   }, [isSupported]);
 
-  // Stop scanning when modal closes
   useEffect(() => {
-    if (!isOpen) {
-      abortRef.current?.abort();
-      abortRef.current = null;
-      setScanState(isSupported ? 'idle' : 'unsupported');
-      setScannedUid(null);
-    }
-  }, [isOpen, isSupported]);
+    if (!isOpen) stopScan();
+  }, [isOpen, stopScan]);
 
-  return { scanState, scannedUid, startScan, clearScan, isSupported };
+  return { scanState, startScan, stopScan, isSupported };
 }
 
 interface SpoolFormModalProps {
@@ -110,8 +109,12 @@ export function SpoolFormModal({
 
   const isEditing = !!spool;
 
-  // NFC scan (create mode only)
-  const { scanState, scannedUid, startScan, clearScan, isSupported: nfcSupported } = useNfcScan(isOpen);
+  // Local pending tag UID — null means "no tag", undefined means "unchanged from server" (edit mode only)
+  // In create mode: null = no tag assigned yet
+  // In edit mode:   initialized from spool.tag_uid on open; null = user cleared it; string = new scan
+  const [pendingTagUid, setPendingTagUid] = useState<string | null>(null);
+
+  const { scanState, startScan, stopScan, isSupported: nfcSupported } = useNfcScan(isOpen, setPendingTagUid);
 
   // Form state
   const [formData, setFormData] = useState<SpoolFormData>(defaultFormData);
@@ -340,6 +343,7 @@ export function SpoolFormModal({
           cost_per_kg: spool.cost_per_kg ?? null,
         });
         setPresetInputValue(spool.slicer_filament_name || spool.slicer_filament || '');
+        setPendingTagUid(spool.tag_uid ?? null);
 
         // Load K-profiles for this spool
         if (spool.k_profiles && spool.k_profiles.length > 0) {
@@ -357,6 +361,7 @@ export function SpoolFormModal({
         setFormData(defaultFormData);
         setPresetInputValue('');
         setSelectedProfiles(new Set());
+        setPendingTagUid(null);
         setQuickAdd(false);
         setQuantity(1);
       }
@@ -442,62 +447,6 @@ export function SpoolFormModal({
     },
   });
 
-  const deleteTagMutation = useMutation({
-    mutationFn: () =>
-      api.updateSpool(spool!.id, { tag_uid: null, tray_uuid: null, tag_type: null, data_origin: null } as Parameters<typeof api.updateSpool>[1]),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['inventory-spools'] });
-      showToast(t('inventory.tagDeleted', 'Tag removed'), 'success');
-      onClose();
-    },
-    onError: (error: Error) => {
-      showToast(error.message, 'error');
-    },
-  });
-
-  const linkTagMutation = useMutation({
-    mutationFn: (uid: string) =>
-      api.linkTagToSpool(spool!.id, { tag_uid: uid, tag_type: 'generic', data_origin: 'nfc_scan' }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['inventory-spools'] });
-      showToast(t('inventory.tagLinked', 'Tag linked'), 'success');
-      onClose();
-    },
-    onError: (error: Error) => {
-      showToast(error.message, 'error');
-    },
-  });
-
-  // In edit mode, trigger link immediately when a tag is scanned
-  useEffect(() => {
-    if (isEditing && scannedUid) {
-      linkTagMutation.mutate(scannedUid);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scannedUid]);
-
-  // Fetch assignment for this spool (to show Unassign button)
-  const { data: assignments } = useQuery({
-    queryKey: ['spool-assignments'],
-    queryFn: () => api.getAssignments(),
-    enabled: isOpen && isEditing,
-  });
-  const spoolAssignment = spool ? assignments?.find(a => a.spool_id === spool.id) : undefined;
-
-  const unassignMutation = useMutation({
-    mutationFn: () => {
-      if (!spoolAssignment) throw new Error('No assignment');
-      return api.unassignSpool(spoolAssignment.printer_id, spoolAssignment.ams_id, spoolAssignment.tray_id);
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['spool-assignments'] });
-      showToast(t('inventory.unassignSuccess', 'Spool unassigned'), 'success');
-      onClose();
-    },
-    onError: (error: Error) => {
-      showToast(error.message, 'error');
-    },
-  });
 
   // Save K-profiles for selected calibrations
   const saveKProfiles = async (spoolId: number) => {
@@ -594,11 +543,23 @@ export function SpoolFormModal({
       data.weight_used = formData.weight_used;
     }
 
-    // Attach scanned NFC tag UID if captured during creation
-    if (!isEditing && scannedUid) {
-      data.tag_uid = scannedUid;
-      data.tag_type = 'generic';
-      data.data_origin = 'nfc_scan';
+    // Tag UID — always include in create; in edit include whenever pendingTagUid differs from server value
+    if (!isEditing) {
+      if (pendingTagUid) {
+        data.tag_uid = pendingTagUid;
+        data.tag_type = 'generic';
+        data.data_origin = 'nfc_scan';
+      }
+    } else {
+      // Always send tag fields in edit so clearing (null) is honoured
+      data.tag_uid = pendingTagUid;
+      if (pendingTagUid && pendingTagUid !== spool?.tag_uid) {
+        data.tag_type = 'generic';
+        data.data_origin = 'nfc_scan';
+      } else if (!pendingTagUid) {
+        data.tag_type = null;
+        data.data_origin = null;
+      }
     }
 
     if (isEditing) {
@@ -610,7 +571,7 @@ export function SpoolFormModal({
     }
   };
 
-  const isPending = createMutation.isPending || bulkCreateMutation.isPending || updateMutation.isPending || deleteTagMutation.isPending || linkTagMutation.isPending || unassignMutation.isPending;
+  const isPending = createMutation.isPending || bulkCreateMutation.isPending || updateMutation.isPending;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -629,15 +590,15 @@ export function SpoolFormModal({
             {/* NFC scan button — only in create mode */}
             {!isEditing && (
               <div className="flex items-center gap-1.5 mr-1">
-                {scannedUid ? (
+                {pendingTagUid ? (
                   <div className="flex items-center gap-1.5 bg-bambu-green/10 border border-bambu-green/30 rounded-lg px-2.5 py-1">
                     <Nfc className="w-4 h-4 text-bambu-green shrink-0" />
-                    <span className="font-mono text-[11px] text-bambu-green max-w-[100px] truncate" title={scannedUid}>
-                      {scannedUid}
+                    <span className="font-mono text-[11px] text-bambu-green max-w-[100px] truncate" title={pendingTagUid}>
+                      {pendingTagUid}
                     </span>
                     <button
                       type="button"
-                      onClick={clearScan}
+                      onClick={() => { setPendingTagUid(null); stopScan(); }}
                       className="text-bambu-green/60 hover:text-bambu-green transition-colors ml-0.5"
                       title="Remove scanned tag"
                     >
@@ -822,41 +783,31 @@ export function SpoolFormModal({
         <div className="flex gap-2 p-4 border-t border-bambu-dark-tertiary flex-shrink-0">
           {isEditing && (
             <div className="flex gap-2 mr-auto">
-              {/* NFC tag area */}
-              {spool?.tag_uid ? (
+              {/* NFC tag area — driven by local pendingTagUid, saved on submit */}
+              {pendingTagUid ? (
                 <Button
                   variant="secondary"
-                  onClick={() => deleteTagMutation.mutate()}
+                  onClick={() => { setPendingTagUid(null); stopScan(); }}
                   disabled={isPending}
-                  title={spool.tag_uid}
+                  title={pendingTagUid}
                 >
                   <Tag className="w-4 h-4" />
-                  <span className="font-mono text-[11px]">{spool.tag_uid.slice(-8)}</span>
+                  <span className="font-mono text-[11px]">{pendingTagUid.slice(-8)}</span>
                   <X className="w-3 h-3 opacity-60" />
                 </Button>
               ) : (
                 <Button
                   variant="secondary"
                   onClick={startScan}
-                  disabled={isPending || !nfcSupported || scanState === 'scanning' || linkTagMutation.isPending}
+                  disabled={isPending || !nfcSupported || scanState === 'scanning'}
                   title={!nfcSupported ? 'Web NFC not supported on this device' : 'Scan NFC tag to link to spool'}
                 >
                   <Nfc className={`w-4 h-4 ${scanState === 'scanning' ? 'text-bambu-green animate-pulse' : ''}`} />
                   {scanState === 'scanning'
                     ? t('inventory.scanning', 'Scanning...')
-                    : linkTagMutation.isPending
-                      ? t('inventory.linking', 'Linking...')
-                      : t('inventory.scanTag', 'Scan Tag')}
+                    : t('inventory.scanTag', 'Scan Tag')}
                 </Button>
               )}
-              <Button
-                variant="secondary"
-                onClick={() => unassignMutation.mutate()}
-                disabled={isPending || !spoolAssignment}
-              >
-                <Unlink className="w-4 h-4" />
-                {t('inventory.unassignSpool', 'Unassign')}
-              </Button>
             </div>
           )}
           <div className="flex gap-2 ml-auto">

@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
-import { X, Loader2, Package, Search } from 'lucide-react';
+import { X, Loader2, Package, Search, Nfc } from 'lucide-react';
 import { api } from '../api/client';
 import type { InventorySpool, SpoolAssignment } from '../api/client';
 import { Button } from './Button';
 import { ConfirmModal } from './ConfirmModal';
 import { useToast } from '../contexts/ToastContext';
+import { normalizeHexTag, uidMatches, suppressNfcModal, unsuppressNfcModal } from '../utils/nfc';
 
 interface AssignSpoolModalProps {
   isOpen: boolean;
@@ -23,6 +24,13 @@ interface AssignSpoolModalProps {
   };
 }
 
+interface NdefReaderLike {
+  scan: (options?: { signal?: AbortSignal }) => Promise<void>;
+  onreading: ((event: { serialNumber?: string }) => void) | null;
+  onreadingerror: (() => void) | null;
+}
+interface NdefReaderConstructorLike { new(): NdefReaderLike; }
+
 export function AssignSpoolModal({ isOpen, onClose, printerId, amsId, trayId, trayInfo }: AssignSpoolModalProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -31,6 +39,8 @@ export function AssignSpoolModal({ isOpen, onClose, printerId, amsId, trayId, tr
   const [searchFilter, setSearchFilter] = useState('');
   const [pendingAssignId, setPendingAssignId] = useState<number | null>(null);
   const [showMismatchConfirm, setShowMismatchConfirm] = useState(false);
+  const [nfcScanning, setNfcScanning] = useState(false);
+  const nfcAbortRef = useRef<AbortController | null>(null);
   const [mismatchDetails, setMismatchDetails] = useState<{
     type: 'material' | 'partial' | 'profile' | 'material_profile' | 'partial_profile';
     spoolMaterial: string;
@@ -80,6 +90,49 @@ export function AssignSpoolModal({ isOpen, onClose, printerId, amsId, trayId, tr
       showToast(`${t('inventory.assignFailed')}: ${error.message}`, 'error');
     },
   });
+
+  // --- NFC scan while modal is open ---
+  // We use a ref for spools so the onreading callback always sees the latest list
+  // without needing to restart the scan when the query refetches.
+  const spoolsRef = useRef(spools);
+  useEffect(() => { spoolsRef.current = spools; }, [spools]);
+
+  useEffect(() => {
+    const ReaderCtor = (window as unknown as { NDEFReader?: NdefReaderConstructorLike }).NDEFReader;
+    if (!isOpen || !ReaderCtor) return;
+
+    suppressNfcModal();
+    const ac = new AbortController();
+    nfcAbortRef.current = ac;
+
+    const reader = new ReaderCtor();
+    reader.onreading = (event) => {
+      const uid = normalizeHexTag(event.serialNumber) || '';
+      const allSpools = spoolsRef.current ?? [];
+      const matched = allSpools.find(s => uidMatches(uid, s.tag_uid));
+      if (matched) {
+        assignMutation.mutate(matched.id);
+      } else {
+        showToast(t('inventory.nfcTagNotFound', 'Tag not linked to any spool'), 'warning');
+      }
+    };
+    reader.onreadingerror = null;
+
+    reader.scan({ signal: ac.signal }).then(() => {
+      setNfcScanning(true);
+    }).catch((err) => {
+      // Permission denied or unsupported — silently ignore, manual selection still works
+      if ((err as Error)?.name !== 'AbortError') setNfcScanning(false);
+    });
+
+    return () => {
+      ac.abort();
+      nfcAbortRef.current = null;
+      setNfcScanning(false);
+      unsuppressNfcModal();
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   // --- Material/profile mismatch logic ---
   const normalizeValue = (value: string | undefined | null) =>
@@ -204,6 +257,12 @@ export function AssignSpoolModal({ isOpen, onClose, printerId, amsId, trayId, tr
           <div className="flex items-center gap-2">
             <Package className="w-5 h-5 text-bambu-green" />
             <h2 className="text-lg font-semibold text-white">{t('inventory.assignSpool')}</h2>
+            {nfcScanning && (
+              <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-bambu-green/10 border border-bambu-green/30 text-[11px] text-bambu-green">
+                <Nfc className="w-3 h-3 animate-pulse" />
+                NFC
+              </span>
+            )}
           </div>
           <button
             onClick={onClose}

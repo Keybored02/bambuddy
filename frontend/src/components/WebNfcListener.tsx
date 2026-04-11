@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { Nfc, X, Package } from 'lucide-react';
 import { api, type InventorySpool } from '../api/client';
+import { normalizeHexTag, uidMatches, isNfcModalSuppressed } from '../utils/nfc';
 
 type NfcStatus = 'unsupported' | 'off' | 'idle' | 'scanning' | 'permission-needed' | 'error';
 
@@ -25,40 +26,6 @@ interface NdefReaderConstructorLike {
   new (): NdefReaderLike;
 }
 
-function normalizeHexTag(value: string | null | undefined): string {
-  if (!value) return '';
-  return value.replace(/[^0-9a-f]/gi, '').toUpperCase();
-}
-
-function normalizeTagUid(value: string | null | undefined): string {
-  const uid = normalizeHexTag(value);
-  if (uid.length > 16) {
-    return uid.slice(-16);
-  }
-  return uid;
-}
-
-function isZeroHex(value: string): boolean {
-  return value.length > 0 && /^0+$/.test(value);
-}
-
-function uidMatches(scannedUid: string | null | undefined, storedUid: string | null | undefined): boolean {
-  const scanned = normalizeTagUid(scannedUid);
-  const stored = normalizeTagUid(storedUid);
-
-  if (!scanned || !stored || isZeroHex(scanned) || isZeroHex(stored)) {
-    return false;
-  }
-
-  if (scanned === stored) return true;
-  if (stored.length > scanned.length && stored.endsWith(scanned)) return true;
-  if (scanned.length > stored.length && scanned.endsWith(stored)) return true;
-  if (scanned.length >= 8 && stored.endsWith(scanned.slice(-8))) return true;
-  if (scanned.length === stored.length && scanned.length > 1 && scanned.slice(1) === stored.slice(1)) return true;
-  if (scanned.length === 8 && stored.length >= 8 && scanned.slice(1) === stored.slice(0, 8).slice(1)) return true;
-
-  return false;
-}
 
 function SpoolCircle({ color, size = 64 }: { color: string; size?: number }) {
   return (
@@ -125,7 +92,9 @@ export function WebNfcListener() {
           serialNumber: normalizeHexTag(event.serialNumber) || 'unknown',
           readAt: Date.now(),
         });
-        setIsModalOpen(true);
+        if (!isNfcModalSuppressed()) {
+          setIsModalOpen(true);
+        }
       };
       reader.onreadingerror = null;
 
