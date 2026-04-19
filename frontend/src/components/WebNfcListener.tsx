@@ -44,6 +44,7 @@ export function WebNfcListener() {
   const [enabled, setEnabled] = useState(true);
   const [status, setStatus] = useState<NfcStatus>('idle');
   const [lastRead, setLastRead] = useState<NfcReadView | null>(null);
+  const [scannedUids, setScannedUids] = useState<string[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const navigate = useNavigate();
 
@@ -55,16 +56,29 @@ export function WebNfcListener() {
   });
 
   const matchedSpool = useMemo<InventorySpool | null>(() => {
-    if (!lastRead) return null;
-    return spools.find((spool) => uidMatches(lastRead.serialNumber, spool.tag_uid)) ?? null;
-  }, [lastRead, spools]);
+    if (scannedUids.length === 0) return null;
+    for (const uid of scannedUids) {
+      const found = spools.find((spool) => uidMatches(uid, spool.tag_uid));
+      if (found) return found;
+    }
+    return null;
+  }, [scannedUids, spools]);
+
+  const showRetryPrompt = !matchedSpool && scannedUids.length === 1;
 
   const readerRef = useRef<NdefReaderLike | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const startScanRef = useRef<(() => Promise<void>) | null>(null);
+  const modalOpenRef = useRef(false);
+
+  useEffect(() => {
+    modalOpenRef.current = isModalOpen;
+  }, [isModalOpen]);
 
   const closeModal = useCallback(() => {
     setIsModalOpen(false);
+    setScannedUids([]);
+    setLastRead(null);
   }, []);
 
   const stopScan = useCallback(() => {
@@ -73,6 +87,8 @@ export function WebNfcListener() {
     readerRef.current = null;
     setStatus('off');
     setIsModalOpen(false);
+    setScannedUids([]);
+    setLastRead(null);
   }, []);
 
   const startScan = useCallback(async () => {
@@ -89,9 +105,12 @@ export function WebNfcListener() {
 
       const reader = new ReaderCtor();
       reader.onreading = (event) => {
-        setLastRead({
-          serialNumber: normalizeHexTag(event.serialNumber) || 'unknown',
-          readAt: Date.now(),
+        const serialNumber = normalizeHexTag(event.serialNumber) || 'unknown';
+        setLastRead({ serialNumber, readAt: Date.now() });
+        setScannedUids((prev) => {
+          if (!modalOpenRef.current) return [serialNumber];
+          if (prev.includes(serialNumber)) return prev;
+          return [...prev, serialNumber];
         });
         if (!isNfcModalSuppressed()) {
           setIsModalOpen(true);
@@ -194,7 +213,11 @@ export function WebNfcListener() {
                   <NfcIcon size={16} className="text-bambu-green" />
                 </div>
                 <h3 className="text-base font-semibold text-white">
-                  {matchedSpool ? 'Spool Detected' : 'NFC Tag Read'}
+                  {matchedSpool
+                    ? 'Spool Detected'
+                    : showRetryPrompt
+                      ? 'Scan the other side'
+                      : 'Not in inventory'}
                 </h3>
               </div>
               <button
@@ -244,18 +267,44 @@ export function WebNfcListener() {
                     <span className="font-mono text-xs text-zinc-400">{lastRead.serialNumber}</span>
                   </div>
                 </>
+              ) : showRetryPrompt ? (
+                <>
+                  {/* First scan miss — prompt for the other side */}
+                  <div className="flex flex-col items-center py-2 gap-2 text-center">
+                    <div className="w-14 h-14 rounded-2xl bg-bambu-green/15 flex items-center justify-center">
+                      <NfcIcon size={28} scanning className="text-bambu-green" />
+                    </div>
+                    <p className="text-sm text-zinc-200 font-medium">No match yet</p>
+                    <p className="text-xs text-zinc-500 max-w-[14rem]">
+                      Bambu spools have two tags. Try tapping the other side of the spool.
+                    </p>
+                  </div>
+                  <div className="flex items-center justify-between bg-zinc-900/60 rounded-xl px-4 py-2.5">
+                    <span className="text-xs text-zinc-500 uppercase tracking-wide">Scanned</span>
+                    <span className="font-mono text-xs text-zinc-400">{scannedUids[0]}</span>
+                  </div>
+                </>
               ) : (
                 <>
-                  {/* Unknown tag */}
-                  <div className="flex flex-col items-center py-2 gap-2">
+                  {/* Both sides scanned — not in inventory */}
+                  <div className="flex flex-col items-center py-2 gap-2 text-center">
                     <div className="w-14 h-14 rounded-2xl bg-zinc-700/60 flex items-center justify-center">
                       <NfcIcon size={28} className="text-zinc-500" />
                     </div>
-                    <p className="text-xs text-zinc-500">No spool linked to this tag</p>
+                    <p className="text-sm text-zinc-200 font-medium">Not in inventory</p>
+                    <p className="text-xs text-zinc-500 max-w-[16rem]">
+                      Neither side of this spool is linked to a registered spool.
+                    </p>
                   </div>
-                  <div className="flex items-center justify-between bg-zinc-900/60 rounded-xl px-4 py-2.5">
-                    <span className="text-xs text-zinc-500 uppercase tracking-wide">Tag UID</span>
-                    <span className="font-mono text-xs text-zinc-400">{lastRead.serialNumber}</span>
+                  <div className="bg-zinc-900/60 rounded-xl px-4 py-2.5 space-y-1.5">
+                    {scannedUids.map((uid, idx) => (
+                      <div key={uid} className="flex items-center justify-between">
+                        <span className="text-xs text-zinc-500 uppercase tracking-wide">
+                          Side {idx + 1}
+                        </span>
+                        <span className="font-mono text-xs text-zinc-400">{uid}</span>
+                      </div>
+                    ))}
                   </div>
                 </>
               )}
