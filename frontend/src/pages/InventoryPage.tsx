@@ -7,6 +7,7 @@ import {
   Search, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight,
   TrendingDown, Layers, Printer, AlertTriangle, X, Clock, LayoutGrid, TableProperties, Columns,
   ArrowUp, ArrowDown, ArrowUpDown, Group, ChevronDown, Check, RefreshCw, TrendingUp, Lock, Copy, Eraser,
+  Upload, Download,
 } from 'lucide-react';
 import { ForecastPanel } from '../components/ForecastPanel';
 import { api, spoolbuddyApi, ApiError } from '../api/client';
@@ -18,6 +19,7 @@ import {SpoolFormModal, type SpoolFormMode} from '../components/SpoolFormModal';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { ColumnConfigModal, type ColumnConfig } from '../components/ColumnConfigModal';
 import { LabelTemplatePickerModal } from '../components/LabelTemplatePickerModal';
+import { SpoolCsvImportModal } from '../components/SpoolCsvImportModal';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import { resolveSpoolColorName } from '../utils/colors';
@@ -285,11 +287,14 @@ const columnCells: Record<string, (ctx: CellCtx) => ReactNode> = {
     );
   },
   tag_id: ({ spool }) => {
-    const tag = spool.tag_uid || spool.tray_uuid;
-    if (!tag) return <span className="text-sm text-bambu-gray/50">-</span>;
+    const uids = [spool.tag_uid, spool.tag_uid_2, spool.tray_uuid].filter(Boolean) as string[];
+    if (uids.length === 0) return <span className="text-sm text-bambu-gray/50">-</span>;
+    const primary = uids[0];
+    const tooltip = uids.join(' / ');
     return (
-      <span className="text-sm text-bambu-gray font-mono" title={tag}>
-        {tag.length > 12 ? `${tag.slice(0, 6)}...${tag.slice(-4)}` : tag}
+      <span className="text-sm text-bambu-gray font-mono" title={tooltip}>
+        {primary.length > 12 ? `${primary.slice(0, 6)}...${primary.slice(-4)}` : primary}
+        {uids.length > 1 && <span className="text-xs text-bambu-gray/50 ml-1">+{uids.length - 1}</span>}
       </span>
     );
   },
@@ -473,6 +478,9 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
   >(null);
   // Label printing (#809). null = closed; otherwise the IDs to print labels for.
   const [labelPickerSpoolIds, setLabelPickerSpoolIds] = useState<number[] | null>(null);
+  // CSV import/export (#1576). Local inventory only — hidden in Spoolman mode.
+  const [csvImportOpen, setCsvImportOpen] = useState(false);
+  const [exportingCsv, setExportingCsv] = useState(false);
 
   // Filter state
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>('active');
@@ -526,6 +534,26 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
       spoolmanMode ? api.getSpoolmanInventorySpools(true) : api.getSpools(true),
     refetchInterval: 30000,
   });
+
+  // CSV export (#1576) — downloads the active inventory as a CSV file.
+  const handleExportCsv = useCallback(async () => {
+    setExportingCsv(true);
+    try {
+      await api.exportSpoolsCsv();
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : t('inventory.csv.exportError', 'Export failed'),
+        'error',
+      );
+    } finally {
+      setExportingCsv(false);
+    }
+  }, [showToast, t]);
+
+  // Shown as the tooltip on both CSV buttons when they're disabled in Spoolman mode.
+  const spoolmanCsvHint = spoolmanMode
+    ? t('inventory.csv.spoolmanHint', 'In Spoolman mode, use Spoolman\'s built-in CSV import/export.')
+    : undefined;
 
   // Deep-link: open edit modal for ?spool=<id>
   // Prefer the already-loaded spool list (no extra API call); fall back to a
@@ -1104,6 +1132,28 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
           <p className="text-bambu-gray mt-1">{t('inventory.subtitle')}</p>
         </div>
         <div className="flex items-center gap-2">
+          {/* CSV import/export (#1576). Operates on Bambuddy's local inventory.
+              In Spoolman mode the buttons stay visible (feature parity) but are
+              disabled with a hint pointing at Spoolman's own CSV export, since
+              Spoolman owns the data store in that mode. */}
+          <Button
+            variant="secondary"
+            disabled={spoolmanMode}
+            onClick={() => setCsvImportOpen(true)}
+            title={spoolmanCsvHint}
+          >
+            <Upload className="w-4 h-4" />
+            {t('inventory.csv.importButton', 'Import CSV')}
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={spoolmanMode || exportingCsv}
+            onClick={handleExportCsv}
+            title={spoolmanCsvHint}
+          >
+            {exportingCsv ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+            {t('inventory.csv.exportButton', 'Export CSV')}
+          </Button>
           <Button
             variant="secondary"
             disabled={filteredSpools.length === 0}
@@ -1931,6 +1981,17 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
         initialSelectedIds={labelPickerSpoolIds ?? []}
         spoolmanMode={spoolmanMode}
       />
+
+      {csvImportOpen && (
+        <SpoolCsvImportModal
+          onClose={() => setCsvImportOpen(false)}
+          onImported={(created) => {
+            setCsvImportOpen(false);
+            queryClient.invalidateQueries({ queryKey: spoolsQueryKey });
+            showToast(t('inventory.csv.importSuccess', '{{count}} spools imported', { count: created }), 'success');
+          }}
+        />
+      )}
     </div>
   );
 }
