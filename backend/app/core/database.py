@@ -183,6 +183,8 @@ async def init_db():
         local_preset,
         location,
         long_lived_token,
+        macro,
+        macro_var,
         maintenance,
         notification,
         notification_template,
@@ -1177,6 +1179,21 @@ async def run_migrations(conn):
         await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN nozzle_offset_cali BOOLEAN DEFAULT 1")
     else:
         await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN nozzle_offset_cali BOOLEAN DEFAULT TRUE")
+
+    # Migration: Per-item preheat / heat-soak override (#1468). preheat_override
+    # is one of {inherit, on, off} — 'inherit' falls back to the global
+    # preheat_enabled setting; 'on' / 'off' force the decision. The chamber
+    # target column overrides the filament-map derivation when not null.
+    # Existing rows default to 'inherit' + NULL so behaviour is unchanged for
+    # in-flight queues.
+    await _safe_execute(
+        conn,
+        "ALTER TABLE print_queue ADD COLUMN preheat_override VARCHAR(10) DEFAULT 'inherit'",
+    )
+    await _safe_execute(
+        conn,
+        "ALTER TABLE print_queue ADD COLUMN preheat_chamber_target_override INTEGER",
+    )
 
     # Migration: Add library_file_id column to print_queue and make archive_id nullable
     # This allows queue items to reference library files directly (archive created at print start)
@@ -2508,6 +2525,25 @@ async def run_migrations(conn):
         async with conn.begin_nested():
             await conn.execute(text("UPDATE api_keys SET can_manage_inventory = can_queue"))
 
+    # #1832 follow-up: carve maintenance CRUD out of the admin denylist so
+    # HA-style automations can log "cleaned nozzle" via API key. Distinct
+    # from the two backfills above: MAINTENANCE_CREATE / _UPDATE / _DELETE
+    # were EXPLICITLY denied for every API key under the pre-migration model
+    # (they were on ``_APIKEY_DENIED_PERMISSIONS``), so no existing
+    # integration relies on them. Column default TRUE matches the "safe,
+    # on-by-default" pattern for keys created via the UI going forward;
+    # existing rows backfill to FALSE so the upgrade path does not silently
+    # widen scope for keys created before this flag existed. Users opt in
+    # via Settings → API Keys per key.
+    column_existed = await _api_keys_column_exists(conn, "can_manage_maintenance")
+    await _safe_execute(
+        conn,
+        "ALTER TABLE api_keys ADD COLUMN can_manage_maintenance BOOLEAN DEFAULT TRUE",
+    )
+    if not column_existed:
+        async with conn.begin_nested():
+            await conn.execute(text("UPDATE api_keys SET can_manage_maintenance = FALSE"))
+
     # Migration: Soft-delete column for trash bin (Issue #1008). Indexed so the
     # sweeper's "SELECT ... WHERE deleted_at < cutoff" and the trash list's
     # "WHERE deleted_at IS NOT NULL" stay cheap as the table grows.
@@ -2634,6 +2670,115 @@ async def run_migrations(conn):
 
     # Migration: Add allow_insecure_http column to github_backup_config for self-hosted HTTP instances
     await _safe_execute(conn, "ALTER TABLE github_backup_config ADD COLUMN allow_insecure_http BOOLEAN DEFAULT FALSE")
+
+    # Migration: Add macro system columns (cfg-file-based redesign)
+    await _safe_execute(
+        conn, "ALTER TABLE macros ADD COLUMN cfg_file_id INTEGER REFERENCES macro_cfg_files(id) ON DELETE CASCADE"
+    )
+    # Migration: Rebuild macros table to remove file_path / status columns (SQLite
+    # cannot DROP columns pre-3.35 and cannot remove NOT NULL constraints at all).
+    # Rebuild whenever file_path OR status still exists in the schema.
+    if is_sqlite():
+        from sqlalchemy import text as _text
+
+        try:
+            result = await conn.execute(_text("PRAGMA table_info(macros)"))
+            cols = {row[1] for row in result.fetchall()}  # row[1] is column name
+            if "file_path" in cols or "status" in cols:
+                await conn.execute(_text("PRAGMA foreign_keys = OFF"))
+                await conn.execute(
+                    _text("""
+                    CREATE TABLE macros_new (
+                        id INTEGER PRIMARY KEY,
+                        name VARCHAR(200) NOT NULL UNIQUE,
+                        description TEXT,
+                        cfg_file_id INTEGER REFERENCES macro_cfg_files(id) ON DELETE CASCADE,
+                        trigger_type VARCHAR(20) NOT NULL DEFAULT 'manual',
+                        cron_expression VARCHAR(100),
+                        printer_id INTEGER REFERENCES printers(id) ON DELETE SET NULL,
+                        created_at DATETIME DEFAULT (CURRENT_TIMESTAMP),
+                        updated_at DATETIME DEFAULT (CURRENT_TIMESTAMP)
+                    )
+                """)
+                )
+                await conn.execute(
+                    _text("""
+                    INSERT INTO macros_new
+                        (id, name, description, cfg_file_id,
+                         trigger_type, cron_expression, printer_id, created_at, updated_at)
+                    SELECT id, name, description, cfg_file_id,
+                           COALESCE(trigger_type, 'manual'),
+                           cron_expression, printer_id, created_at, updated_at
+                    FROM macros
+                """)
+                )
+                await conn.execute(_text("DROP TABLE macros"))
+                await conn.execute(_text("ALTER TABLE macros_new RENAME TO macros"))
+                await conn.execute(_text("PRAGMA foreign_keys = ON"))
+                logger.info("macros table rebuilt: removed file_path/status columns")
+        except Exception:
+            logger.exception("macros table rebuild failed — manual intervention may be needed")
+
+    # Migration: Create macro_vars table for persistent macro key-value storage
+    # Use SERIAL for PostgreSQL, INTEGER PRIMARY KEY (implicit autoincrement) for SQLite.
+    if is_sqlite():
+        await _safe_execute(
+            conn,
+            """
+            CREATE TABLE IF NOT EXISTS macro_vars (
+                id INTEGER PRIMARY KEY,
+                key VARCHAR(200) NOT NULL,
+                value_json TEXT NOT NULL,
+                macro_id INTEGER REFERENCES macros(id) ON DELETE CASCADE,
+                expires_at DATETIME,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+        )
+    else:
+        await _safe_execute(
+            conn,
+            """
+            CREATE TABLE IF NOT EXISTS macro_vars (
+                id SERIAL PRIMARY KEY,
+                key VARCHAR(200) NOT NULL,
+                value_json TEXT NOT NULL,
+                macro_id INTEGER REFERENCES macros(id) ON DELETE CASCADE,
+                expires_at TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+        )
+    await _safe_execute(conn, "CREATE INDEX IF NOT EXISTS ix_macro_vars_key ON macro_vars(key)")
+    await _safe_execute(conn, "CREATE INDEX IF NOT EXISTS ix_macro_vars_macro_id ON macro_vars(macro_id)")
+    await _safe_execute(
+        conn,
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_macro_vars_key_macro_id ON macro_vars(key, macro_id)",
+    )
+
+    # Migration: Add can_run_macros column to api_keys for the macro system
+    await _safe_execute(conn, "ALTER TABLE api_keys ADD COLUMN can_run_macros BOOLEAN DEFAULT 0")
+    # Legacy SQLite installs created `settings` without a UNIQUE constraint on `key`,
+    # so `INSERT OR IGNORE` below silently degrades to a plain INSERT and dupes rows on
+    # every restart. Dedupe (keep lowest id per key) and add the missing unique index
+    # before seeding. Safe/idempotent on both dialects — fresh installs already have
+    # no dupes and `create_all` already emits the index.
+    async with conn.begin_nested():
+        await conn.execute(text("DELETE FROM settings WHERE id NOT IN (SELECT MIN(id) FROM settings GROUP BY key)"))
+    await _safe_execute(conn, "CREATE UNIQUE INDEX IF NOT EXISTS ix_settings_key ON settings(key)")
+
+    # Migration: Normalise provider_email to lowercase (SEC-3).
+    # Required for Entra ID where UPN/email claims may arrive in mixed case.
+    # LOWER() is supported by both SQLite and PostgreSQL; the UPDATE is idempotent.
+    # Executed directly (not via _safe_execute) so any column-reference failure
+    # is always fatal and never silently swallowed.
+    async with conn.begin_nested():
+        await conn.execute(
+            text(
+                "UPDATE user_oidc_links SET provider_email = LOWER(provider_email) "
+                "WHERE provider_email IS NOT NULL AND provider_email != LOWER(provider_email)"
+            )
+        )
 
     # Seed default settings keys that must exist on fresh install
     default_settings = [

@@ -371,46 +371,62 @@ class ThreeMFParser:
 
                     raw_model = match.group(1).strip()
                     self.metadata["sliced_for_model"] = normalize_printer_model(raw_model)
+
+            # Scan full G-code for embedded macro calls: "; MACRO: macro_name [args]"
+            self._parse_embedded_macros(zf, gcode_path)
         except Exception:
             pass  # G-code header parsing is best-effort; metadata may come from other sources
 
+    def _parse_embedded_macros(self, zf: zipfile.ZipFile, gcode_path: str):
+        """Scan G-code for '; MACRO: name' comment lines and collect them."""
+        try:
+            macro_pattern = re.compile(r"^\s*;\s*MACRO:\s*(.+)", re.IGNORECASE)
+            embedded: list[str] = []
+            with zf.open(gcode_path) as f:
+                for raw_line in f:
+                    line = raw_line.decode("utf-8", errors="ignore").rstrip()
+                    m = macro_pattern.match(line)
+                    if m:
+                        embedded.append(m.group(1).strip())
+            if embedded:
+                self.metadata["embedded_macros"] = embedded
+        except Exception:
+            pass  # Best-effort; don't block archiving
+
     def _extract_filament_info(self, data: dict):
-        """Extract filament info, preferring non-support filaments."""
+        """Extract filament info from project settings — includes support
+        materials so a PLA-model / PVA-support project shows both on the
+        archive card badge (#1881).
+
+        Earlier code filtered by ``filament_is_support``; that hid PVA
+        (and any other soluble/breakaway support material) from the card
+        even when the user had explicitly configured it, and made source
+        3MFs look single-material until the print completed. slice_info
+        (parsed separately) is still preferred when present — it lists
+        only filaments the print actually consumes, this fallback only
+        runs on unsliced source 3MFs.
+        """
         try:
             filament_types = data.get("filament_type", [])
             filament_colors = data.get("filament_colour", [])
-            filament_is_support = data.get("filament_is_support", [])
 
             if not filament_types:
                 return
 
-            # Collect all non-support filaments
-            non_support_types = []
-            non_support_colors = []
+            unique_types: list[str] = []
+            for ftype in filament_types:
+                if ftype and ftype not in unique_types:
+                    unique_types.append(ftype)
 
-            for i, ftype in enumerate(filament_types):
-                is_support = filament_is_support[i] if i < len(filament_is_support) else "0"
-                if is_support == "0":
-                    if ftype and ftype not in non_support_types:
-                        non_support_types.append(ftype)
-                    if i < len(filament_colors) and filament_colors[i]:
-                        color = filament_colors[i]
-                        if color not in non_support_colors:
-                            non_support_colors.append(color)
+            unique_colors: list[str] = []
+            for color in filament_colors:
+                if color and color not in unique_colors:
+                    unique_colors.append(color)
 
-            # Fallback to first filament if all are support
-            if not non_support_types and filament_types:
-                non_support_types = [filament_types[0]]
-            if not non_support_colors and filament_colors:
-                non_support_colors = [filament_colors[0]]
-
-            # Store filament type(s)
-            if non_support_types:
-                self.metadata["filament_type"] = ", ".join(non_support_types)
-
-            # Store all colors as comma-separated (for multi-color display)
-            if non_support_colors:
-                self.metadata["filament_color"] = ",".join(non_support_colors)
+            if unique_types:
+                self.metadata["filament_type"] = ", ".join(unique_types)
+            if unique_colors:
+                self.metadata["filament_color"] = ",".join(unique_colors)
 
         except Exception:
             pass  # Filament info is optional; fall back to slice_info values
@@ -1306,6 +1322,28 @@ class ArchiveService:
         self.db.add(archive)
         await self.db.commit()
         await self.db.refresh(archive)
+
+        # Fire any embedded macros found in the G-code (side-effect only; no printer commands)
+        embedded_macros: list[str] = metadata.get("embedded_macros", [])
+        if embedded_macros:
+            import asyncio
+
+            from sqlalchemy import select as _select
+
+            from backend.app.models.macro import Macro
+            from backend.app.services.macro_runner import macro_runner
+
+            result = await self.db.execute(_select(Macro).where(Macro.name.in_(embedded_macros)))
+            found_macros = result.scalars().all()
+            for macro in found_macros:
+                asyncio.create_task(
+                    macro_runner.run_macro(
+                        macro.id,
+                        printer_id,
+                        "gcode_embed",
+                        allow_printer_commands=False,
+                    )
+                )
 
         return archive
 

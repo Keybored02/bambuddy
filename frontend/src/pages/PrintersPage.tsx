@@ -87,7 +87,7 @@ import {
 } from 'lucide-react';
 
 import { useNavigate } from 'react-router-dom';
-import { api, discoveryApi, firmwareApi, withStreamToken, ApiError } from '../api/client';
+import { api, discoveryApi, firmwareApi, withStreamToken, getAuthToken, ApiError } from '../api/client';
 import { formatDateOnly, formatETA, formatDuration, parseUTCDate } from '../utils/date';
 import type { Printer, PrinterCreate, PrinterStatus, AMSUnit, DiscoveredPrinter, FirmwareUpdateInfo, FirmwareUploadStatus, LinkedSpoolInfo, SpoolAssignment, HMSError, InventorySpool, SmartPlug, PrinterDiagnosticResult } from '../api/client';
 import { Card, CardContent } from '../components/Card';
@@ -121,6 +121,15 @@ import { FilamentSlotCircle } from '../components/FilamentSlotCircle';
 import { Collapsible } from '../components/Collapsible';
 import { ConnectionDiagnosticModal, DiagnosticChecklist } from '../components/ConnectionDiagnostic';
 import { getColorName, parseFilamentColor, isLightColor } from '../utils/colors';
+
+function openTerminalWindow(printerId?: number, printerName?: string) {
+  const params = new URLSearchParams({ standalone: '1' });
+  if (printerId != null) params.set('printer', String(printerId));
+  if (printerName) params.set('name', printerName);
+  const token = getAuthToken();
+  if (token) params.set('token', token);
+  window.open(`/terminal?${params}`, printerId ? `terminal-${printerId}` : 'terminal', 'width=960,height=640,noopener,noreferrer');
+}
 
 export interface SpoolmanSlotAssignmentRow {
   printer_id: number;
@@ -1749,6 +1758,7 @@ function PrinterCard({
   checkPrinterFirmware = true,
   dryingPresets = DRYING_PRESETS,
   requirePlateClear = false,
+  onOpenTerminal,
   selectionMode = false,
   isSelected = false,
   onToggleSelect,
@@ -1787,6 +1797,7 @@ function PrinterCard({
   checkPrinterFirmware?: boolean;
   dryingPresets?: Record<string, { n3f: number; n3s: number; n3f_hours: number; n3s_hours: number }>;
   requirePlateClear?: boolean;
+  onOpenTerminal?: (printerId: number, printerName: string) => void;
   selectionMode?: boolean;
   isSelected?: boolean;
   onToggleSelect?: (id: number) => void;
@@ -3066,6 +3077,18 @@ function PrinterCard({
             <RotateCw className={`w-4 h-4 ${forceRefreshMutation.isPending ? 'animate-spin' : ''}`} />
             {t('printers.forceRefresh')}
           </button>
+          {onOpenTerminal && (
+            <button
+              className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
+              onClick={() => {
+                onOpenTerminal(printer.id, printer.name);
+                setShowMenu(false);
+              }}
+            >
+              <Terminal className="w-4 h-4" />
+              {t('terminal.title')}
+            </button>
+          )}
           <button
             className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
             onClick={() => {
@@ -3391,8 +3414,9 @@ function PrinterCard({
                 </span>
               ) : null}
 
-              {/* Enclosure Door Badge (X1/X2D/P1S/P2S/H2*) */}
-              {status?.connected && ['X1C', 'X1', 'X1E', 'X2D', 'P1S', 'P1P', 'P2S', 'H2D', 'H2D Pro', 'H2C', 'H2S'].includes(printer.model ?? '') && (
+              {/* Enclosure Door Badge — models with an actual door sensor.
+                  P1S has an enclosure door but no sensor; P1P has no enclosure at all. */}
+              {status?.connected && ['X1C', 'X1', 'X1E', 'X2D', 'P2S', 'H2D', 'H2D Pro', 'H2C', 'H2S'].includes(printer.model ?? '') && (
                 <span
                   className={`flex items-center px-2 py-1 rounded-full text-xs ${
                     status.door_open
@@ -8580,6 +8604,14 @@ export function PrintersPage() {
               </ToolbarMenu>
             </div>
           )}
+          <Button
+            variant="secondary"
+            onClick={() => openTerminalWindow()}
+            title={t('terminal.title')}
+          >
+            <Terminal className="w-4 h-4" />
+            {t('terminal.title')}
+          </Button>
         </div>
       </div>
 
@@ -8720,6 +8752,7 @@ export function PrintersPage() {
                       timeFormat={settings?.time_format || 'system'}
                       cameraViewMode={settings?.camera_view_mode || 'window'}
                       onOpenEmbeddedCamera={(id, name) => setEmbeddedCameraPrinters(prev => new Map(prev).set(id, { id, name }))}
+                      onOpenTerminal={(id, name) => openTerminalWindow(id, name)}
                       checkPrinterFirmware={settings?.check_printer_firmware !== false}
                       dryingPresets={effectiveDryingPresets}
                       nozzleTempPresets={effectiveNozzleTempPresets}
@@ -8769,6 +8802,7 @@ export function PrintersPage() {
               timeFormat={settings?.time_format || 'system'}
               cameraViewMode={settings?.camera_view_mode || 'window'}
               onOpenEmbeddedCamera={(id, name) => setEmbeddedCameraPrinters(prev => new Map(prev).set(id, { id, name }))}
+              onOpenTerminal={(id, name) => openTerminalWindow(id, name)}
               checkPrinterFirmware={settings?.check_printer_firmware !== false}
               dryingPresets={effectiveDryingPresets}
               nozzleTempPresets={effectiveNozzleTempPresets}

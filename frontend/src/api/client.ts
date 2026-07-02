@@ -470,7 +470,7 @@ export interface PrinterStatus {
   ipcam: boolean;  // Live view enabled
   wifi_signal: number | null;  // WiFi signal strength in dBm
   wired_network: boolean;  // Ethernet connection detected
-  door_open: boolean;  // Enclosure door open (X1/P1S/P2S/H2*)
+  door_open: boolean;  // Enclosure door open (models with a door sensor: X1/X1C/X1E/X2D/P2S/H2*)
   nozzles: NozzleInfo[];  // Nozzle hardware info (index 0=left/primary, 1=right)
   nozzle_rack: NozzleRackSlot[];  // H2C 6-nozzle tool-changer rack
   print_options: PrintOptions | null;  // AI detection and print options
@@ -1048,6 +1048,7 @@ export interface APIKey {
   can_read_status: boolean;
   can_manage_library: boolean;
   can_manage_inventory: boolean;
+  can_manage_maintenance: boolean;
   can_access_cloud: boolean;
   can_update_energy_cost: boolean;
   printer_ids: number[] | null;
@@ -1064,6 +1065,7 @@ export interface APIKeyCreate {
   can_read_status?: boolean;
   can_manage_library?: boolean;
   can_manage_inventory?: boolean;
+  can_manage_maintenance?: boolean;
   can_access_cloud?: boolean;
   can_update_energy_cost?: boolean;
   printer_ids?: number[] | null;
@@ -1081,6 +1083,7 @@ export interface APIKeyUpdate {
   can_read_status?: boolean;
   can_manage_library?: boolean;
   can_manage_inventory?: boolean;
+  can_manage_maintenance?: boolean;
   can_access_cloud?: boolean;
   can_update_energy_cost?: boolean;
   printer_ids?: number[] | null;
@@ -1210,6 +1213,15 @@ export interface AppSettings {
   require_plate_clear: boolean;
   // Shortest job first scheduling
   queue_shortest_first: boolean;
+  // Preheat / heat-soak before queued prints (#1468). Master toggle is the
+  // default for new queue items; per-item PrintQueueItem.preheat_override can
+  // flip the decision per print. Chamber target derives from the loaded AMS
+  // filament types via preheat_filament_targets (JSON map of type → °C, max
+  // across loaded slots); the per-item override field bypasses derivation.
+  preheat_enabled: boolean;
+  preheat_filament_targets: string;
+  preheat_max_wait_seconds: number;
+  preheat_soak_seconds: number;
   // User-configurable presets for the printer-card popovers (JSON arrays of 3 ints).
   // Empty string = use built-in defaults.
   nozzle_temp_presets: string;
@@ -2076,6 +2088,8 @@ export interface PrintQueueItem {
   timelapse: boolean;
   use_ams: boolean;
   nozzle_offset_cali: boolean;
+  preheat_override: 'inherit' | 'on' | 'off';
+  preheat_chamber_target_override: number | null;
   status: 'pending' | 'printing' | 'completed' | 'failed' | 'skipped' | 'cancelled';
   started_at: string | null;
   completed_at: string | null;
@@ -2151,6 +2165,8 @@ export interface PrintQueueItemCreate {
   timelapse?: boolean;
   use_ams?: boolean;
   nozzle_offset_cali?: boolean;
+  preheat_override?: 'inherit' | 'on' | 'off';
+  preheat_chamber_target_override?: number | null;
   // Auto-print G-code injection
   gcode_injection?: boolean;
   // Batch: create multiple copies (creates a batch if > 1)
@@ -2193,6 +2209,8 @@ export interface PrintQueueItemUpdate {
   timelapse?: boolean;
   use_ams?: boolean;
   nozzle_offset_cali?: boolean;
+  preheat_override?: 'inherit' | 'on' | 'off';
+  preheat_chamber_target_override?: number | null;
   // Auto-print G-code injection
   gcode_injection?: boolean;
 }
@@ -2212,6 +2230,8 @@ export interface PrintQueueBulkUpdate {
   timelapse?: boolean;
   use_ams?: boolean;
   nozzle_offset_cali?: boolean;
+  preheat_override?: 'inherit' | 'on' | 'off';
+  preheat_chamber_target_override?: number | null;
   // Auto-print G-code injection
   gcode_injection?: boolean;
 }
@@ -3136,6 +3156,7 @@ export type Permission =
   | 'api_keys:read' | 'api_keys:create' | 'api_keys:update' | 'api_keys:delete'
   | 'users:read' | 'users:create' | 'users:update' | 'users:delete'
   | 'groups:read' | 'groups:create' | 'groups:update' | 'groups:delete'
+  | 'macros:read' | 'macros:create' | 'macros:update' | 'macros:delete' | 'macros:run'
   | 'pipelines:read' | 'pipelines:write' | 'pipelines:run'
   | 'websocket:connect';
 
@@ -6455,7 +6476,79 @@ export const api = {
     request<{ success: boolean }>(`/local-presets/${id}`, { method: 'DELETE' }),
   refreshBaseProfileCache: () =>
     request<{ refreshed: number; failed: number; total: number }>('/local-presets/base-cache/refresh', { method: 'POST' }),
+
+  // Macro cfg files
+  getMacroCfgFiles: () => request<MacroCfgFile[]>('/macros/cfg-files'),
+  getMacroCfgFile: (id: number) => request<MacroCfgFile>(`/macros/cfg-files/${id}`),
+  getMacroCfgFileContent: (id: number) => request<{ content: string }>(`/macros/cfg-files/${id}/content`),
+  createMacroCfgFile: (data: { name: string; content?: string }) =>
+    request<MacroCfgFile>('/macros/cfg-files', { method: 'POST', body: JSON.stringify(data) }),
+  saveMacroCfgFile: (id: number, content: string) =>
+    request<MacroCfgFile>(`/macros/cfg-files/${id}`, { method: 'PUT', body: JSON.stringify({ content }) }),
+  deleteMacroCfgFile: (id: number) =>
+    request<{ ok: boolean }>(`/macros/cfg-files/${id}`, { method: 'DELETE' }),
+
+  // Macros
+  getMacros: () => request<Macro[]>('/macros'),
+  getMacro: (id: number) => request<Macro>(`/macros/${id}`),
+  runMacro: (id: number, printer_id?: number) =>
+    request<MacroRun>(`/macros/${id}/run`, { method: 'POST', body: JSON.stringify({ printer_id: printer_id ?? null }) }),
+  getMacroRuns: (id: number) => request<MacroRun[]>(`/macros/${id}/runs`),
+  getMacroRun: (runId: number) => request<MacroRun>(`/macros/runs/${runId}`),
+  cancelMacroRun: (runId: number) => request<{ ok: boolean }>(`/macros/runs/${runId}/cancel`, { method: 'POST' }),
+  getGcodeWhitelist: () => request<string[]>('/macros/gcode-whitelist'),
+  getFunctionCatalogue: () => request<MacroFunctionSpec[]>('/macros/functions'),
+  execLine: (line: string, printer_id?: number) =>
+    request<{ status: string; log: string; hms_errors: { code: string; severity: number; message: string }[]; printer_state: string; run_id: number | null }>('/macros/exec', { method: 'POST', body: JSON.stringify({ line, printer_id: printer_id ?? null }) }),
 };
+
+// Macro types
+export interface MacroCfgFile {
+  id: number;
+  name: string;
+  file_path: string;
+  parse_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface Macro {
+  id: number;
+  name: string;
+  description: string | null;
+  cfg_file_id: number | null;
+  trigger_type: 'manual' | 'webhook' | 'schedule';
+  cron_expression: string | null;
+  printer_id: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MacroRun {
+  id: number;
+  macro_id: number;
+  printer_id: number | null;
+  status: 'pending' | 'running' | 'success' | 'error';
+  trigger: 'manual' | 'webhook' | 'schedule' | 'gcode_embed' | 'terminal';
+  started_at: string;
+  finished_at: string | null;
+  log: string | null;
+}
+
+export interface MacroFunctionArg {
+  description: string;
+  required: boolean;
+  default: string | null;
+}
+
+export interface MacroFunctionSpec {
+  name: string;
+  description: string;
+  args: Record<string, MacroFunctionArg>;
+  context_var: string | null;
+  requires_printer: boolean;
+  allowed_in_embed: boolean;
+}
 
 // AMS History types
 export interface AMSHistoryPoint {
