@@ -819,6 +819,11 @@ class GitHubBackupService:
                 "category": s.category,
                 "low_stock_threshold_pct": s.low_stock_threshold_pct,
                 "storage_location": s.storage_location,
+                # Batch ID (#2828), owner (#1301) and purchase date (#3408),
+                # the latter as YYYY-MM-DD.
+                "batch_id": s.batch_id,
+                "owner": s.owner,
+                "purchase_date": s.purchase_date.isoformat() if s.purchase_date else None,
                 # When it was last printed with (LU-4): without it, every spool
                 # read as never used after a restore.
                 "last_used": str(s.last_used) if s.last_used else None,
@@ -901,6 +906,7 @@ class GitHubBackupService:
                 "filename": a.filename,
                 "file_size": a.file_size,
                 "content_hash": a.content_hash,
+                "gcode_hash": a.gcode_hash,
                 "print_name": a.print_name,
                 "print_time_seconds": a.print_time_seconds,
                 "filament_used_grams": a.filament_used_grams,

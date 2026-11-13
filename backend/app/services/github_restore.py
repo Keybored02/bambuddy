@@ -40,7 +40,7 @@ import re
 from collections.abc import Iterable
 from contextvars import ContextVar
 from dataclasses import dataclass, field as dataclasses_field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 import httpx
 from pydantic import BaseModel
@@ -167,6 +167,16 @@ def _admin_only_for_restore(key: str) -> bool:
 # the backup was written by a newer version, so accept it rather than dropping
 # data, but keep the list for validation messages.
 _KNOWN_NOZZLES = {"0.2", "0.4", "0.6", "0.8"}
+
+
+def _parse_date(value) -> date | None:
+    """A day the backup wrote as YYYY-MM-DD, or None when it is not one."""
+    if not value or not isinstance(value, str):
+        return None
+    try:
+        return date.fromisoformat(value.strip()[:10])
+    except ValueError:
+        return None
 
 
 def _parse_dt(value) -> datetime | None:
@@ -1686,6 +1696,11 @@ class GitHubRestoreService:
                 file_path="",
                 file_size=entry.get("file_size") or 0,
                 content_hash=entry.get("content_hash"),
+                # The file is not in the backup, so its G-code cannot be read
+                # here: the backup's fingerprint lets a print of the same slice
+                # sent from the slicer join this archive and give it the file
+                # (#1634). Older backups have none, and the fill marks it read.
+                gcode_hash=_gcode_hash_of(entry),
                 **fields,
             )
             created_at = _parse_dt(entry.get("created_at"))
@@ -2013,6 +2028,13 @@ class GitHubRestoreService:
             # When it was last used (LU-4), same late-field rule.
             if "last_used" in entry:
                 fields["last_used"] = _parse_dt(entry.get("last_used"))
+            # Batch ID (#2828), owner (#1301) and purchase date (#3408), same
+            # late-field rule.
+            for late_field in ("batch_id", "owner"):
+                if late_field in entry:
+                    fields[late_field] = entry[late_field]
+            if "purchase_date" in entry:
+                fields["purchase_date"] = _parse_date(entry.get("purchase_date"))
             # Last drying (#2863), same late-field rule.
             if "last_dried_at" in entry:
                 fields["last_dried_at"] = _parse_dt(entry.get("last_dried_at"))
@@ -2740,3 +2762,12 @@ class GitHubRestoreService:
 
 # Singleton instance
 github_restore_service = GitHubRestoreService()
+
+
+_GCODE_HASH = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _gcode_hash_of(entry: dict) -> str | None:
+    """The backed-up G-code fingerprint (#1634), when it is one."""
+    value = entry.get("gcode_hash")
+    return value if isinstance(value, str) and _GCODE_HASH.match(value) else None
