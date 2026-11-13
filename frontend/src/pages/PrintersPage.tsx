@@ -96,6 +96,8 @@ import {
   Signal,
   Clock,
   MoreVertical,
+  Volume2,
+  VolumeX,
   Trash2,
   RefreshCw,
   RotateCw,
@@ -3102,6 +3104,29 @@ function PrinterCard({
     },
   });
 
+  // Printer prompt sounds (start / finish music, alerts), with an optimistic update (#3483)
+  const printerSoundMutation = useMutation({
+    mutationFn: (enabled: boolean) => api.setPrinterSound(printer.id, enabled),
+    onMutate: async (enabled) => {
+      await queryClient.cancelQueries({ queryKey: ['printerStatus', printer.id] });
+      const previousStatus = queryClient.getQueryData(['printerStatus', printer.id]);
+      queryClient.setQueryData(['printerStatus', printer.id], (old: typeof status) => ({
+        ...old,
+        sound_enabled: enabled,
+      }));
+      return { previousStatus };
+    },
+    onSuccess: (_, enabled) => {
+      showToast(enabled ? t('printers.toast.printerSoundEnabled') : t('printers.toast.printerSoundDisabled'));
+    },
+    onError: (error: Error, _, context) => {
+      if (context?.previousStatus) {
+        queryClient.setQueryData(['printerStatus', printer.id], context.previousStatus);
+      }
+      showToast(error.message || t('printers.toast.failedToControlPrinterSound'), 'error');
+    },
+  });
+
   // Print speed mutation with optimistic update
   const printSpeedMutation = useMutation({
     mutationFn: (mode: number) => api.setPrintSpeed(printer.id, mode),
@@ -5035,6 +5060,27 @@ function PrinterCard({
                       >
                         <ChamberLight on={status.chamber_light ?? false} className="w-[var(--pc-i4,1rem)] h-[var(--pc-i4,1rem)]" />
                       </button>
+
+                      {/* Prompt sounds: only on a printer that reports the option (#3483) */}
+                      {status.sound_enabled != null && (
+                        <button
+                          onClick={() => printerSoundMutation.mutate(!status.sound_enabled)}
+                          disabled={!status.connected || printerSoundMutation.isPending || !hasPermission('printers:control')}
+                          className={`${iconControlClass} ${
+                            status.sound_enabled
+                              ? 'bg-bambu-green/10 text-bambu-green hover:bg-bambu-green/20'
+                              : 'bg-bambu-dark text-bambu-gray/50 hover:bg-bambu-dark-tertiary hover:text-white'
+                          }`}
+                          title={!hasPermission('printers:control') ? t('printers.permission.noControl') : (status.sound_enabled ? t('printers.printerSoundOff') : t('printers.printerSoundOn'))}
+                          aria-pressed={status.sound_enabled}
+                        >
+                          {status.sound_enabled ? (
+                            <Volume2 className="w-[var(--pc-i4,1rem)] h-[var(--pc-i4,1rem)]" />
+                          ) : (
+                            <VolumeX className="w-[var(--pc-i4,1rem)] h-[var(--pc-i4,1rem)]" />
+                          )}
+                        </button>
+                      )}
 
                       {/* Airduct Mode (P2S / X2D / H2* / H3C, an H2D Pro stored as "H2D Pro", #3335) */}
                       {(['P2S', 'X2D', 'H2D', 'H2D Pro', 'H2C', 'H2S', 'H3C'].includes(printer.model ?? '')) && (() => {
@@ -8678,6 +8724,7 @@ function EditPrinterModal({
     auto_archive: printer.auto_archive,
     is_active: printer.is_active,
     wear_cost_per_hour: printer.wear_cost_per_hour ? String(printer.wear_cost_per_hour) : '',
+    dispatch_priority: printer.dispatch_priority != null ? String(printer.dispatch_priority) : '',
   });
   const { data: settings } = useUiSettings();
   const currency = getCurrencySymbol(settings?.currency || 'USD');
@@ -8736,6 +8783,8 @@ function EditPrinterModal({
       is_active: form.is_active,
       // Empty or 0 turns wear cost off for this printer (#694)
       wear_cost_per_hour: Number(form.wear_cost_per_hour) > 0 ? Number(form.wear_cost_per_hour) : null,
+      // Empty clears it; 0 is a real place (first) (#2915)
+      dispatch_priority: form.dispatch_priority.trim() === '' ? null : Math.max(0, Math.round(Number(form.dispatch_priority)) || 0),
     };
     // Only include access_code if it was changed
     if (form.access_code) {
@@ -8902,6 +8951,23 @@ function EditPrinterModal({
                 placeholder="0.00"
               />
               <p className="text-xs text-bambu-gray mt-1">{t('printers.modal.wearCostHelp')}</p>
+            </div>
+            <div>
+              <label htmlFor="edit_dispatch_priority" className="block text-sm text-bambu-gray mb-1">
+                {t('printers.modal.dispatchPriorityLabel', 'Priority for any-model jobs')}
+              </label>
+              <input
+                id="edit_dispatch_priority"
+                type="number"
+                min={0}
+                step={1}
+                inputMode="numeric"
+                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                value={form.dispatch_priority}
+                onChange={(e) => setForm({ ...form, dispatch_priority: e.target.value })}
+                placeholder="-"
+              />
+              <p className="text-xs text-bambu-gray mt-1">{t('printers.modal.dispatchPriorityHelp')}</p>
             </div>
             {/* Maintenance Mode toggle (#1476) — checkbox is the inverse of
                 is_active because the user-facing concept is "is this printer

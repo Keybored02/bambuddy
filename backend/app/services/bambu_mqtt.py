@@ -111,6 +111,19 @@ def parse_ams_filament_backup_from_cfg(cfg_raw: object) -> bool | None:
         return None
 
 
+def parse_sound_from_home_flag(home_flag: object) -> tuple[bool, bool] | None:
+    """Read the printer's prompt-sound option from a ``print.home_flag`` value (#3483).
+
+    Returns ``(supported, enabled)``: bit 18 says the printer has the option at
+    all (the toggle is offered only then) and bit 17 whether the sound is on.
+    Bambu Studio reads the same bits for its "prompt sound" setting. ``None``
+    when the value is not an integer, so a malformed frame changes nothing.
+    """
+    if isinstance(home_flag, bool) or not isinstance(home_flag, int):
+        return None
+    return bool((home_flag >> 18) & 1), bool((home_flag >> 17) & 1)
+
+
 def parse_ams_filament_backup_from_home_flag(home_flag: object) -> bool | None:
     """Extract AMS Filament Backup state from a push_status ``print.home_flag`` value.
 
@@ -1387,6 +1400,10 @@ class PrinterState:
     # which uses the old protocol path; field not yet found). Consumers must treat
     # None as "no opinion" — preserving today's behaviour, NOT as "disabled".
     ams_filament_backup: bool | None = None
+    # Prompt sounds (start / finish music and alerts), from home_flag bits 17 and 18 (#3483).
+    # sound_supported is False until a frame says the printer has the option.
+    sound_supported: bool = False
+    sound_enabled: bool = False
 
 
 # Stage name mapping from BambuStudio DeviceManager.cpp
@@ -1726,6 +1743,10 @@ class BambuMQTTClient:
         self._message_log: deque[MQTTLogEntry] = deque(maxlen=100)
         self._logging_enabled: bool = False
         self._last_message_time: float = 0.0  # Track when we last received a message
+        # Bambuddy's own FTP uploads to this printer (#3538): an A1 publishes
+        # nothing while it receives a large file, which is not a stale link.
+        self._uploads_in_flight: int = 0
+        self._last_upload_end: float = 0.0
         # Count of report-topic messages received since the last (re)connect.
         # Lets check_staleness() distinguish "printer never sent a status
         # report" (typically a wrong / mis-cased serial) from a normal quiet
@@ -1906,11 +1927,29 @@ class BambuMQTTClient:
     # Maximum time (seconds) without a message before considering connection stale
     STALE_TIMEOUT = 60.0
 
+    def begin_upload(self) -> None:
+        """Bambuddy starts an FTP upload to this printer (#3538)."""
+        self._uploads_in_flight += 1
+
+    def end_upload(self) -> None:
+        """The upload is over; the printer gets STALE_TIMEOUT from now to speak."""
+        self._uploads_in_flight = max(0, self._uploads_in_flight - 1)
+        self._last_upload_end = time.time()
+
     def is_stale(self) -> bool:
-        """Check if the connection is stale (no messages for too long)."""
+        """Check if the connection is stale (no messages for too long).
+
+        Not while Bambuddy is uploading to the printer, nor within
+        STALE_TIMEOUT after: an A1 says nothing over MQTT while it receives a
+        large file, and the forced reconnect that silence used to trigger
+        landed just before the print command, which then found the printer
+        disconnected and failed the job (#3538).
+        """
         if self._last_message_time == 0:
             return False  # Never received a message yet
-        time_since_last = time.time() - self._last_message_time
+        if self._uploads_in_flight > 0:
+            return False
+        time_since_last = time.time() - max(self._last_message_time, self._last_upload_end)
         return time_since_last > self.STALE_TIMEOUT
 
     def mark_power_off(self) -> bool:
@@ -5745,6 +5784,22 @@ class BambuMQTTClient:
                 )
             self.state.store_to_sdcard = store_to_sdcard
 
+            sound = parse_sound_from_home_flag(home_flag)
+            if sound is not None:
+                supported, enabled = sound
+                self.state.sound_supported = supported
+                hold_start = self._xcam_hold_start.get("print_option_sound_enable")
+                if hold_start is not None and (time.time() - hold_start) <= self._xcam_hold_time:
+                    # The user just changed it; the next frames still carry the old
+                    # value until the printer has applied it.
+                    logger.debug("[%s] prompt sound push ignored (hold active)", self.serial_number)
+                else:
+                    if enabled != self.state.sound_enabled:
+                        logger.debug(
+                            "[%s] prompt sound changed: %s -> %s", self.serial_number, self.state.sound_enabled, enabled
+                        )
+                    self.state.sound_enabled = enabled
+
         # Door open detection — source depends on printer family:
         #   X1 series (X1, X1C, X1E): home_flag bit 23
         #   All others (P1/P2/H2/A1/N-series): top-level `stat` field (hex string), bit 23
@@ -7144,8 +7199,14 @@ class BambuMQTTClient:
             self.state.print_options.auto_recovery_step_loss = enabled
         elif option_name == "auto_switch_filament":
             self.state.ams_filament_backup = enabled
+        elif option_name == "sound_enable":
+            self.state.sound_enabled = enabled
 
         return True
+
+    def set_sound_enable(self, enabled: bool) -> bool:
+        """Turn the printer's prompt sounds (start / finish music, alerts) on or off (#3483)."""
+        return self._set_print_option("sound_enable", enabled)
 
     def set_ams_filament_backup(self, enabled: bool) -> bool:
         """Toggle AMS Filament Backup (a.k.a. auto-switch / auto-refill).

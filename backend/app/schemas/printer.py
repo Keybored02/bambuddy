@@ -181,6 +181,9 @@ class PrinterUpdate(IgnoresNullForRequiredColumns):
     print_hours_offset: float | None = None
     # Wear cost per printing hour (#694); null or 0 turns it off.
     wear_cost_per_hour: float | None = Field(default=None, ge=0, le=100000)
+    # Place in the pick order of "Any model" jobs when the order setting is "priority"
+    # (#2915); lowest first, null last.
+    dispatch_priority: int | None = Field(default=None, ge=0, le=100000)
     external_camera_url: str | None = None
     external_camera_type: str | None = None
     external_camera_enabled: bool | None = None
@@ -204,6 +207,7 @@ class PrinterResponse(PrinterBase):
     supports_nozzle_flow_type: bool = True
     print_hours_offset: float = 0.0
     wear_cost_per_hour: float | None = None  # #694
+    dispatch_priority: int | None = None  # #2915
     external_camera_url: str | None = None
     external_camera_type: str | None = None
     external_camera_enabled: bool = False
@@ -555,6 +559,9 @@ class PrinterStatus(BaseModel):
     # True = ON, False = OFF, None = unknown / unsupported (A1 family — protocol field
     # not yet identified). UI treats None as "status unavailable", not as a hard disable.
     ams_filament_backup: bool | None = None
+    # Prompt sounds (start / finish music and alerts): True / False, or None when the
+    # printer does not report the option, so the UI offers no toggle (#3483).
+    sound_enabled: bool | None = None
     # Queue: printer is awaiting the user to acknowledge the build plate is cleared
     # after a finished/failed print. Persisted across restarts (#961).
     awaiting_plate_clear: bool = False
