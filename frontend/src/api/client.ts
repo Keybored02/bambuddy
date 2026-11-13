@@ -490,6 +490,7 @@ export interface Printer {
   plate_detection_enabled: boolean;  // Check plate before print
   plate_detection_roi?: PlateDetectionROI;  // ROI for plate detection
   wear_cost_per_hour: number | null;  // Wear cost per printing hour (#694)
+  dispatch_priority: number | null;  // Place in the pick order of any-model jobs, lowest first (#2915)
   wled_config: WLEDConfig | null;
   created_at: string;
   updated_at: string;
@@ -823,6 +824,7 @@ export interface PrinterCreate {
   plate_detection_enabled?: boolean;
   plate_detection_roi?: PlateDetectionROI;
   wear_cost_per_hour?: number | null;
+  dispatch_priority?: number | null;
   wled_config?: WLEDConfig | null;
 }
 
@@ -1477,6 +1479,8 @@ export interface APIKeyCreateResponse extends APIKey {
 export type CalibrationMode = 'off' | 'on' | 'auto';
 
 // Settings types
+export type ModelDispatchOrder = 'fewest_hours' | 'most_hours' | 'least_recently_used' | 'priority';
+
 export interface AppSettings {
   auto_archive: boolean;
   save_thumbnails: boolean;
@@ -1635,6 +1639,8 @@ export interface AppSettings {
   require_plate_clear: boolean;
   // Shortest job first scheduling
   queue_shortest_first: boolean;
+  // Which printer an any-model job takes when several can run it (#2915).
+  model_dispatch_order: ModelDispatchOrder;
   // How many printers the queue may upload to at once (#2555). 1 restores the
   // old strictly-serial behaviour, where every printer waited out every other
   // printer's transfer.
@@ -2036,6 +2042,9 @@ export interface SliceRequest {
   // preset's own default_filament_colour, then the source plate's colour).
   filament_colours?: string[];
   plate?: number;
+  // With plate 0 on a multi-plate 3MF: one file per plate instead of one
+  // multi-plate file (#2818).
+  one_file_per_plate?: boolean;
   export_3mf?: boolean;
   // Build-plate override (#1337). When omitted, the slicer uses the process
   // preset's curr_bed_type as-is. A name from BambuStudio / OrcaSlicer's
@@ -2291,6 +2300,9 @@ export interface SliceResponse {
    * slice. Surfaced to the user — a file filed somewhere they aren't looking
    * with no signal is what made #2810 invisible from the UI. */
   external_write_fallback?: string | null;
+  /** Every file the slice made, in plate order, when it made one per plate
+   * (#2818); the fields above describe the first of them. */
+  library_file_ids?: number[] | null;
 }
 
 export interface SliceArchiveResponse {
@@ -2300,6 +2312,8 @@ export interface SliceArchiveResponse {
   filament_used_g: number;
   filament_used_mm: number;
   used_embedded_settings: boolean;
+  /** As library_file_ids: every archive made, one per plate. */
+  archive_ids?: number[] | null;
 }
 
 // Background slice-job lifecycle. POST /slice returns 202 + this shape;
@@ -2418,6 +2432,8 @@ export interface CloudDevice {
 }
 
 // Smart Plug types
+export type SmartPlugTempSource = 'nozzle' | 'bed';
+
 export interface SmartPlug {
   id: number;
   name: string;
@@ -2475,6 +2491,9 @@ export interface SmartPlug {
   off_delay_mode: 'time' | 'temperature';
   off_delay_minutes: number;
   off_temp_threshold: number;
+  // #3464: what temperature mode waits for, and the bed's own threshold.
+  off_temp_source: SmartPlugTempSource;
+  off_bed_temp_threshold: number;
   // #1349: auto-off after AMS drying completes.
   auto_off_after_drying: boolean;
   off_delay_after_drying_minutes: number;
@@ -2553,6 +2572,9 @@ export interface SmartPlugCreate {
   off_delay_mode?: 'time' | 'temperature';
   off_delay_minutes?: number;
   off_temp_threshold?: number;
+  // #3464
+  off_temp_source?: SmartPlugTempSource;
+  off_bed_temp_threshold?: number;
   // #1349
   auto_off_after_drying?: boolean;
   off_delay_after_drying_minutes?: number;
@@ -2623,6 +2645,9 @@ export interface SmartPlugUpdate {
   off_delay_mode?: 'time' | 'temperature';
   off_delay_minutes?: number;
   off_temp_threshold?: number;
+  // #3464
+  off_temp_source?: SmartPlugTempSource;
+  off_bed_temp_threshold?: number;
   // #1349
   auto_off_after_drying?: boolean;
   off_delay_after_drying_minutes?: number;
