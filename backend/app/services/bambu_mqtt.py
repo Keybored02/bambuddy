@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 import paho.mqtt.client as mqtt
 
 from backend.app.services.hms_actions import HMSAction, get_actions_for_error_code
-from backend.app.services.hms_errors import alert_level_from_print_error, describe_fault
+from backend.app.services.hms_errors import alert_level_from_print_error, describe_fault, is_hidden_hms_code
 from backend.app.utils.ams_drying import ACTIVE_DRY_STATUSES, DRY_COUNTDOWN_STALL_SECONDS
 from backend.app.utils.ams_humidity import ams_humidity_percent
 from backend.app.utils.paho_teardown import discard_queued_publishes, retire_paho_client
@@ -1726,6 +1726,10 @@ class BambuMQTTClient:
         self._message_log: deque[MQTTLogEntry] = deque(maxlen=100)
         self._logging_enabled: bool = False
         self._last_message_time: float = 0.0  # Track when we last received a message
+        # Bambuddy's own FTP uploads to this printer (#3538): an A1 publishes
+        # nothing while it receives a large file, which is not a stale link.
+        self._uploads_in_flight: int = 0
+        self._last_upload_end: float = 0.0
         # Count of report-topic messages received since the last (re)connect.
         # Lets check_staleness() distinguish "printer never sent a status
         # report" (typically a wrong / mis-cased serial) from a normal quiet
@@ -1906,11 +1910,29 @@ class BambuMQTTClient:
     # Maximum time (seconds) without a message before considering connection stale
     STALE_TIMEOUT = 60.0
 
+    def begin_upload(self) -> None:
+        """Bambuddy starts an FTP upload to this printer (#3538)."""
+        self._uploads_in_flight += 1
+
+    def end_upload(self) -> None:
+        """The upload is over; the printer gets STALE_TIMEOUT from now to speak."""
+        self._uploads_in_flight = max(0, self._uploads_in_flight - 1)
+        self._last_upload_end = time.time()
+
     def is_stale(self) -> bool:
-        """Check if the connection is stale (no messages for too long)."""
+        """Check if the connection is stale (no messages for too long).
+
+        Not while Bambuddy is uploading to the printer, nor within
+        STALE_TIMEOUT after: an A1 says nothing over MQTT while it receives a
+        large file, and the forced reconnect that silence used to trigger
+        landed just before the print command, which then found the printer
+        disconnected and failed the job (#3538).
+        """
         if self._last_message_time == 0:
             return False  # Never received a message yet
-        time_since_last = time.time() - self._last_message_time
+        if self._uploads_in_flight > 0:
+            return False
+        time_since_last = time.time() - max(self._last_message_time, self._last_upload_end)
         return time_since_last > self.STALE_TIMEOUT
 
     def mark_power_off(self) -> bool:
@@ -5613,6 +5635,11 @@ class BambuMQTTClient:
                         # action table still has some short-form entries, so that
                         # lookup falls back to it.
                         full_code = f"{attr:08X}{code:08X}"
+                        # The AMS firmware mismatch, when the user has chosen to hide
+                        # it (a BMCU raises it for good, #3269). Only hms[] faults:
+                        # print_error never goes through this.
+                        if is_hidden_hms_code(full_code):
+                            continue
                         if full_code == HMS_MQTT_VERIFY_FAILED:
                             verify_failed = True
                         actions = get_actions_for_error_code(self.serial_number[:3], full_code)

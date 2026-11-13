@@ -490,6 +490,7 @@ export interface Printer {
   plate_detection_enabled: boolean;  // Check plate before print
   plate_detection_roi?: PlateDetectionROI;  // ROI for plate detection
   wear_cost_per_hour: number | null;  // Wear cost per printing hour (#694)
+  dispatch_priority: number | null;  // Place in the pick order of any-model jobs, lowest first (#2915)
   wled_config: WLEDConfig | null;
   created_at: string;
   updated_at: string;
@@ -823,6 +824,7 @@ export interface PrinterCreate {
   plate_detection_enabled?: boolean;
   plate_detection_roi?: PlateDetectionROI;
   wear_cost_per_hour?: number | null;
+  dispatch_priority?: number | null;
   wled_config?: WLEDConfig | null;
 }
 
@@ -1477,6 +1479,8 @@ export interface APIKeyCreateResponse extends APIKey {
 export type CalibrationMode = 'off' | 'on' | 'auto';
 
 // Settings types
+export type ModelDispatchOrder = 'fewest_hours' | 'most_hours' | 'least_recently_used' | 'priority';
+
 export interface AppSettings {
   auto_archive: boolean;
   save_thumbnails: boolean;
@@ -1534,6 +1538,7 @@ export interface AppSettings {
   time_format: 'system' | '12h' | '24h';
   // Filament tracking
   disable_filament_warnings: boolean;  // Disable filament warnings (print insufficiency and assignment mismatch)
+  hide_ams_firmware_warning: boolean;  // Hide the AMS firmware mismatch warning (HMS 05XX_0400_0001_0044), for a BMCU (#3269)
   prefer_lowest_filament: boolean;  // When multiple spools match, prefer lowest remaining filament
   spoolman_enabled: boolean;  // True when the user has switched filament tracking to Spoolman; backend includes this in the /settings/ response even though earlier consumers read it from the dedicated /settings/spoolman endpoint as a string
   auto_add_unknown_rfid: boolean;  // When false, the backend skips auto-creating inventory spools for unknown RFID tags and instead broadcasts an unknown_tag event for the confirmation modal
@@ -1635,6 +1640,8 @@ export interface AppSettings {
   require_plate_clear: boolean;
   // Shortest job first scheduling
   queue_shortest_first: boolean;
+  // Which printer an any-model job takes when several can run it (#2915).
+  model_dispatch_order: ModelDispatchOrder;
   // How many printers the queue may upload to at once (#2555). 1 restores the
   // old strictly-serial behaviour, where every printer waited out every other
   // printer's transfer.
@@ -2418,6 +2425,8 @@ export interface CloudDevice {
 }
 
 // Smart Plug types
+export type SmartPlugTempSource = 'nozzle' | 'bed';
+
 export interface SmartPlug {
   id: number;
   name: string;
@@ -2475,6 +2484,9 @@ export interface SmartPlug {
   off_delay_mode: 'time' | 'temperature';
   off_delay_minutes: number;
   off_temp_threshold: number;
+  // #3464: what temperature mode waits for, and the bed's own threshold.
+  off_temp_source: SmartPlugTempSource;
+  off_bed_temp_threshold: number;
   // #1349: auto-off after AMS drying completes.
   auto_off_after_drying: boolean;
   off_delay_after_drying_minutes: number;
@@ -2553,6 +2565,9 @@ export interface SmartPlugCreate {
   off_delay_mode?: 'time' | 'temperature';
   off_delay_minutes?: number;
   off_temp_threshold?: number;
+  // #3464
+  off_temp_source?: SmartPlugTempSource;
+  off_bed_temp_threshold?: number;
   // #1349
   auto_off_after_drying?: boolean;
   off_delay_after_drying_minutes?: number;
@@ -2623,6 +2638,9 @@ export interface SmartPlugUpdate {
   off_delay_mode?: 'time' | 'temperature';
   off_delay_minutes?: number;
   off_temp_threshold?: number;
+  // #3464
+  off_temp_source?: SmartPlugTempSource;
+  off_bed_temp_threshold?: number;
   // #1349
   auto_off_after_drying?: boolean;
   off_delay_after_drying_minutes?: number;
