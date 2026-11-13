@@ -490,6 +490,7 @@ export interface Printer {
   plate_detection_enabled: boolean;  // Check plate before print
   plate_detection_roi?: PlateDetectionROI;  // ROI for plate detection
   wear_cost_per_hour: number | null;  // Wear cost per printing hour (#694)
+  dispatch_priority: number | null;  // Place in the pick order of any-model jobs, lowest first (#2915)
   wled_config: WLEDConfig | null;
   created_at: string;
   updated_at: string;
@@ -823,6 +824,7 @@ export interface PrinterCreate {
   plate_detection_enabled?: boolean;
   plate_detection_roi?: PlateDetectionROI;
   wear_cost_per_hour?: number | null;
+  dispatch_priority?: number | null;
   wled_config?: WLEDConfig | null;
 }
 
@@ -1477,6 +1479,8 @@ export interface APIKeyCreateResponse extends APIKey {
 export type CalibrationMode = 'off' | 'on' | 'auto';
 
 // Settings types
+export type ModelDispatchOrder = 'fewest_hours' | 'most_hours' | 'least_recently_used' | 'priority';
+
 export interface AppSettings {
   auto_archive: boolean;
   save_thumbnails: boolean;
@@ -1635,6 +1639,8 @@ export interface AppSettings {
   require_plate_clear: boolean;
   // Shortest job first scheduling
   queue_shortest_first: boolean;
+  // Which printer an any-model job takes when several can run it (#2915).
+  model_dispatch_order: ModelDispatchOrder;
   // How many printers the queue may upload to at once (#2555). 1 restores the
   // old strictly-serial behaviour, where every printer waited out every other
   // printer's transfer.
@@ -2418,6 +2424,8 @@ export interface CloudDevice {
 }
 
 // Smart Plug types
+export type SmartPlugTempSource = 'nozzle' | 'bed';
+
 export interface SmartPlug {
   id: number;
   name: string;
@@ -2475,6 +2483,9 @@ export interface SmartPlug {
   off_delay_mode: 'time' | 'temperature';
   off_delay_minutes: number;
   off_temp_threshold: number;
+  // #3464: what temperature mode waits for, and the bed's own threshold.
+  off_temp_source: SmartPlugTempSource;
+  off_bed_temp_threshold: number;
   // #1349: auto-off after AMS drying completes.
   auto_off_after_drying: boolean;
   off_delay_after_drying_minutes: number;
@@ -2553,6 +2564,9 @@ export interface SmartPlugCreate {
   off_delay_mode?: 'time' | 'temperature';
   off_delay_minutes?: number;
   off_temp_threshold?: number;
+  // #3464
+  off_temp_source?: SmartPlugTempSource;
+  off_bed_temp_threshold?: number;
   // #1349
   auto_off_after_drying?: boolean;
   off_delay_after_drying_minutes?: number;
@@ -2623,6 +2637,9 @@ export interface SmartPlugUpdate {
   off_delay_mode?: 'time' | 'temperature';
   off_delay_minutes?: number;
   off_temp_threshold?: number;
+  // #3464
+  off_temp_source?: SmartPlugTempSource;
+  off_bed_temp_threshold?: number;
   // #1349
   auto_off_after_drying?: boolean;
   off_delay_after_drying_minutes?: number;
@@ -4140,6 +4157,15 @@ export interface SpoolSupplierLinkInput {
   quoted_price_per_kg?: number | null;
   /** Marks where this concrete spool was actually bought. */
   is_purchase_source?: boolean;
+  /** The product's own page at this supplier (#2540), http(s) only. */
+  product_url?: string | null;
+}
+
+/** Where a batch of new spools was bought (#2540): a shopping list item received. */
+export interface SpoolPurchaseSource {
+  supplier_id: number;
+  supplier_article_number?: string | null;
+  product_url?: string | null;
 }
 
 export interface SpoolSupplierLink {
@@ -4149,6 +4175,8 @@ export interface SpoolSupplierLink {
   supplier_article_number: string | null;
   quoted_price_per_kg: number | null;
   is_purchase_source: boolean;
+  /** The product's own page at this supplier (#2540). */
+  product_url: string | null;
 }
 
 /** Per-supplier inventory aggregate (#2988), purchase-source spools only. */
@@ -4410,6 +4438,11 @@ export interface ShoppingListItem {
   status: 'pending' | 'purchased' | 'received';
   purchased_at: string | null;
   added_at: string;
+  /** Where to buy it (#2540); supplier_name is null once the supplier is gone. */
+  supplier_id: number | null;
+  supplier_name: string | null;
+  supplier_article_number: string | null;
+  product_url: string | null;
 }
 
 export interface ShoppingListItemCreate {
@@ -4419,6 +4452,9 @@ export interface ShoppingListItemCreate {
   color_name: string | null;
   quantity_spools: number;
   note?: string | null;
+  supplier_id?: number | null;
+  supplier_article_number?: string | null;
+  product_url?: string | null;
 }
 
 // Update types
@@ -7274,10 +7310,14 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  bulkCreateSpools: (data: Omit<InventorySpool, 'id' | 'archived_at' | 'created_at' | 'updated_at' | 'k_profiles'>, quantity: number) =>
+  bulkCreateSpools: (
+    data: Omit<InventorySpool, 'id' | 'archived_at' | 'created_at' | 'updated_at' | 'k_profiles'>,
+    quantity: number,
+    purchaseSource?: SpoolPurchaseSource | null,
+  ) =>
     request<InventorySpool[]>('/inventory/spools/bulk', {
       method: 'POST',
-      body: JSON.stringify({ spool: data, quantity }),
+      body: JSON.stringify({ spool: data, quantity, ...(purchaseSource ? { purchase_source: purchaseSource } : {}) }),
     }),
   // ── CSV import/export (#1576) ────────────────────────────────────────────
   // dry_run=true → preview (no write); omitted → real import. Both share one
