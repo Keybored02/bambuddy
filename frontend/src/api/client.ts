@@ -487,9 +487,11 @@ export interface Printer {
   external_camera_snapshot_url: string | null;  // optional single-frame override (#1177)
   camera_rotation: number;  // 0, 90, 180, 270 degrees
   camera_light_auto: boolean;  // picked for the chamber light when camera_light_mode is 'selected' (#1655)
+  plate_clear_override: PlateClearOverride;  // overrides the require_plate_clear setting for this printer (#2860)
   plate_detection_enabled: boolean;  // Check plate before print
   plate_detection_roi?: PlateDetectionROI;  // ROI for plate detection
   wear_cost_per_hour: number | null;  // Wear cost per printing hour (#694)
+  dispatch_priority: number | null;  // Place in the pick order of any-model jobs, lowest first (#2915)
   wled_config: WLEDConfig | null;
   created_at: string;
   updated_at: string;
@@ -802,6 +804,9 @@ export interface PrinterStatus {
   supports_chamber_heater?: boolean;
 }
 
+// 'inherit' follows the require_plate_clear setting; 'on' / 'off' decide for one printer (#2860)
+export type PlateClearOverride = 'inherit' | 'on' | 'off';
+
 export interface PrinterCreate {
   name: string;
   serial_number: string;
@@ -820,9 +825,11 @@ export interface PrinterCreate {
   external_camera_snapshot_url?: string | null;
   camera_rotation?: number;
   camera_light_auto?: boolean;
+  plate_clear_override?: PlateClearOverride;
   plate_detection_enabled?: boolean;
   plate_detection_roi?: PlateDetectionROI;
   wear_cost_per_hour?: number | null;
+  dispatch_priority?: number | null;
   wled_config?: WLEDConfig | null;
 }
 
@@ -1477,6 +1484,8 @@ export interface APIKeyCreateResponse extends APIKey {
 export type CalibrationMode = 'off' | 'on' | 'auto';
 
 // Settings types
+export type ModelDispatchOrder = 'fewest_hours' | 'most_hours' | 'least_recently_used' | 'priority';
+
 export interface AppSettings {
   auto_archive: boolean;
   save_thumbnails: boolean;
@@ -1635,6 +1644,8 @@ export interface AppSettings {
   require_plate_clear: boolean;
   // Shortest job first scheduling
   queue_shortest_first: boolean;
+  // Which printer an any-model job takes when several can run it (#2915).
+  model_dispatch_order: ModelDispatchOrder;
   // How many printers the queue may upload to at once (#2555). 1 restores the
   // old strictly-serial behaviour, where every printer waited out every other
   // printer's transfer.
@@ -2418,6 +2429,8 @@ export interface CloudDevice {
 }
 
 // Smart Plug types
+export type SmartPlugTempSource = 'nozzle' | 'bed';
+
 export interface SmartPlug {
   id: number;
   name: string;
@@ -2475,6 +2488,9 @@ export interface SmartPlug {
   off_delay_mode: 'time' | 'temperature';
   off_delay_minutes: number;
   off_temp_threshold: number;
+  // #3464: what temperature mode waits for, and the bed's own threshold.
+  off_temp_source: SmartPlugTempSource;
+  off_bed_temp_threshold: number;
   // #1349: auto-off after AMS drying completes.
   auto_off_after_drying: boolean;
   off_delay_after_drying_minutes: number;
@@ -2553,6 +2569,9 @@ export interface SmartPlugCreate {
   off_delay_mode?: 'time' | 'temperature';
   off_delay_minutes?: number;
   off_temp_threshold?: number;
+  // #3464
+  off_temp_source?: SmartPlugTempSource;
+  off_bed_temp_threshold?: number;
   // #1349
   auto_off_after_drying?: boolean;
   off_delay_after_drying_minutes?: number;
@@ -2623,6 +2642,9 @@ export interface SmartPlugUpdate {
   off_delay_mode?: 'time' | 'temperature';
   off_delay_minutes?: number;
   off_temp_threshold?: number;
+  // #3464
+  off_temp_source?: SmartPlugTempSource;
+  off_bed_temp_threshold?: number;
   // #1349
   auto_off_after_drying?: boolean;
   off_delay_after_drying_minutes?: number;

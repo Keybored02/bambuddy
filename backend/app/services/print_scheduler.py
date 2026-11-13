@@ -1271,6 +1271,44 @@ def _wear_order(printer: Printer) -> tuple[float, int]:
     return hours, printer.id
 
 
+def _hours_of(printer: Printer) -> float:
+    return (printer.runtime_seconds or 0) / 3600.0 + (printer.print_hours_offset or 0.0)
+
+
+def _order_printers(
+    printers: list[Printer], order: str, last_finished: dict[int, datetime] | None = None
+) -> list[Printer]:
+    """Sort the printers an "Any model" job could take into the order they are picked (#2915).
+
+    Whatever the strategy, ties fall back to the printer id, so the outcome is
+    reproducible.
+
+    * ``fewest_hours`` (the default, #3480): the least worn machine first.
+    * ``most_hours``: the most worn first, to use up the machines already near
+      replacement.
+    * ``least_recently_used``: the printer that finished a print longest ago;
+      one that never has goes first.
+    * ``priority``: the printers' own ``dispatch_priority``, lowest first; one
+      without goes last.
+    """
+    if order == "most_hours":
+        return sorted(printers, key=lambda p: (-_hours_of(p), p.id))
+    if order == "least_recently_used":
+        finished = last_finished or {}
+        never = datetime.min
+        return sorted(printers, key=lambda p: (finished.get(p.id, never), p.id))
+    if order == "priority":
+        return sorted(
+            printers,
+            key=lambda p: (
+                p.dispatch_priority is None,
+                p.dispatch_priority if p.dispatch_priority is not None else 0,
+                p.id,
+            ),
+        )
+    return sorted(printers, key=_wear_order)
+
+
 class PrintScheduler:
     """Background scheduler that processes the print queue."""
 
@@ -1465,6 +1503,9 @@ class PrintScheduler:
         # when a gate setting toggles off mid-hold — the release publishes
         # bed → 0 first).
         self._keep_warm: dict[int, _KeepWarmEntry] = {}
+        # Printers whose plate-clear gate differs from the setting (#2860):
+        # printer id -> "on" / "off". Refreshed once per queue check.
+        self._plate_clear_overrides: dict[int, str] = {}
         # Preheat rollback registry: printer_id -> subset of
         # {"bed", "chamber", "airduct"} listing which preheat commands
         # actually fired for the in-flight dispatch. `_dispatch_one` unwinds
@@ -1771,6 +1812,7 @@ class PrintScheduler:
             # blocking dispatch to FINISH-state printers forever with no UI path
             # to clear it (#1865).
             require_plate_clear = await self._get_bool_setting(db, "require_plate_clear", default=False)
+            await self._load_plate_clear_overrides(db)
 
             # Dispatch and track scheduled drying runs (#2638)
             await self._check_scheduled_dryings(db)
@@ -2207,7 +2249,9 @@ class PrintScheduler:
                         continue
 
                     # Check if printer is idle
-                    printer_idle = self._is_printer_idle(item.printer_id, require_plate_clear)
+                    printer_idle = self._is_printer_idle(
+                        item.printer_id, self._plate_gate(item.printer_id, require_plate_clear)
+                    )
                     printer_connected = printer_manager.is_connected(item.printer_id)
 
                     # If printer not connected, try to power on via smart plug
@@ -2239,7 +2283,9 @@ class PrintScheduler:
                                     except Exception as e:
                                         logger.warning("Failed to power on extra plug '%s': %s", extra_plug.name, e)
                                 printer_connected = True
-                                printer_idle = self._is_printer_idle(item.printer_id, require_plate_clear)
+                                printer_idle = self._is_printer_idle(
+                                    item.printer_id, self._plate_gate(item.printer_id, require_plate_clear)
+                                )
                             else:
                                 logger.warning("Could not power on printer %s via smart plug", item.printer_id)
                                 await hold_for_printer(
@@ -2269,7 +2315,9 @@ class PrintScheduler:
                             item.printer_id,
                             "not idle",
                             self._pinned_hold_reason(
-                                item.printer_id, printer_label(item.printer_id), require_plate_clear
+                                item.printer_id,
+                                printer_label(item.printer_id),
+                                self._plate_gate(item.printer_id, require_plate_clear),
                             ),
                         )
                         continue
@@ -3290,7 +3338,8 @@ class PrintScheduler:
         only be woken onto a printer the matcher would also have considered.
         ``printer_scope`` is the job creator's (#1727).
 
-        Fewest print hours first (#3480): both take the first printer that
+        In the order of Settings > Queue > printer order (#2915), fewest print
+        hours first by default (#3480): both take the first printer that
         fits, so an "Any" job goes to the least worn machine and a farm's jobs
         spread by wear instead of all landing on the lowest id. The hours are
         the maintenance counter's (runtime plus the baseline offset), which
@@ -3308,7 +3357,34 @@ class PrintScheduler:
         if (clause := printer_scope.where_strict(Printer.id)) is not None:
             query = query.where(clause)
         result = await db.execute(query)
-        return sorted(result.scalars().all(), key=_wear_order)
+        printers = list(result.scalars().all())
+        order = await self._get_model_dispatch_order(db)
+        last_finished: dict[int, datetime] | None = None
+        if order == "least_recently_used" and printers:
+            last_finished = await self._last_finished_by_printer(db, [p.id for p in printers])
+        return _order_printers(printers, order, last_finished)
+
+    async def _get_model_dispatch_order(self, db: AsyncSession) -> str:
+        """The order setting (#2915); anything unknown reads as the default."""
+        result = await db.execute(select(Settings).where(Settings.key == "model_dispatch_order"))
+        setting = result.scalar_one_or_none()
+        value = (setting.value if setting else "") or ""
+        return value if value in ("most_hours", "least_recently_used", "priority") else "fewest_hours"
+
+    async def _last_finished_by_printer(self, db: AsyncSession, printer_ids: list[int]) -> dict[int, datetime]:
+        """When each printer last finished a print, from the Print Log; none for one that never has."""
+        from backend.app.models.print_log import PrintLogEntry
+
+        result = await db.execute(
+            select(PrintLogEntry.printer_id, func.max(PrintLogEntry.completed_at))
+            .where(PrintLogEntry.printer_id.in_(printer_ids), PrintLogEntry.completed_at.is_not(None))
+            .group_by(PrintLogEntry.printer_id)
+        )
+        return {
+            printer_id: finished
+            for printer_id, finished in result.all()
+            if printer_id is not None and finished is not None
+        }
 
     async def _wakeable_printer_ids(self, db: AsyncSession) -> set[int]:
         """Printer IDs that at least one enabled ``auto_on`` plug can power on.
@@ -3393,7 +3469,9 @@ class PrintScheduler:
                     # sibling instead of spending this pass — and every pass —
                     # on the same printer.
                     continue
-                if require_plate_clear and printer_manager.is_awaiting_plate_clear(printer.id):
+                if self._plate_gate(printer.id, require_plate_clear) and printer_manager.is_awaiting_plate_clear(
+                    printer.id
+                ):
                     # Waking this one buys nothing: it would boot into IDLE and
                     # then be held by the plate-clear gate, which is exactly
                     # what the reporter's log shows happening for 80 minutes
@@ -3550,7 +3628,11 @@ class PrintScheduler:
                 continue
 
             is_connected = printer_manager.is_connected(printer.id)
-            is_idle = self._is_printer_idle(printer.id, require_plate_clear) if is_connected else False
+            is_idle = (
+                self._is_printer_idle(printer.id, self._plate_gate(printer.id, require_plate_clear))
+                if is_connected
+                else False
+            )
 
             if not is_connected:
                 # An offline printer whose last known filament cannot run this
@@ -5321,6 +5403,26 @@ class PrintScheduler:
             return False
 
         return True
+
+    async def _load_plate_clear_overrides(self, db: AsyncSession) -> None:
+        """Read which printers override the plate-clear setting (#2860)."""
+        result = await db.execute(
+            select(Printer.id, Printer.plate_clear_override).where(Printer.plate_clear_override != "inherit")
+        )
+        self._plate_clear_overrides = dict(result.all())
+
+    def _plate_gate(self, printer_id: int, require_plate_clear: bool) -> bool:
+        """Whether this printer waits for the plate-clear confirmation (#2860).
+
+        ``require_plate_clear`` is the global setting; the printer's own
+        override wins over it, "inherit" printers follow it.
+        """
+        override = self._plate_clear_overrides.get(printer_id)
+        if override == "on":
+            return True
+        if override == "off":
+            return False
+        return require_plate_clear
 
     def _is_printer_idle(self, printer_id: int, require_plate_clear: bool = True) -> bool:
         """Check if a printer is connected and idle."""
@@ -7392,11 +7494,18 @@ class PrintScheduler:
         dispatch_set = set(dispatch_ids)
         dispatched_printers = {it.printer_id for it in items if it.id in dispatch_set and it.printer_id}
         pending_printer_ids = {it.printer_id for it in items if it.printer_id}
-        warm_candidates = (pending_printer_ids & busy_printers) - dispatched_printers
+        # Keep-warm covers the plate-clear window, so a printer that has none
+        # (override off) is not held warm, and one that has one (override on)
+        # is, whatever the setting says (#2860).
+        warm_candidates = {
+            pid
+            for pid in (pending_printer_ids & busy_printers) - dispatched_printers
+            if self._plate_gate(pid, require_plate_clear)
+        }
 
         keep_warm_enabled = await self._get_bool_setting(db, "queue_keep_bed_warm", default=False)
         preheat_on = await self._get_bool_setting(db, "preheat_enabled", default=False)
-        gate_open = keep_warm_enabled and require_plate_clear and preheat_on
+        gate_open = keep_warm_enabled and preheat_on
 
         # Release sweep first — must run even when gate_open is False so a
         # printer owned by keep-warm when a gate toggles off gets released.
@@ -9604,34 +9713,37 @@ class PrintScheduler:
         upload_failure = FtpFailureReport()
 
         try:
-            if ftp_retry_enabled:
-                uploaded = await with_ftp_retry(
-                    upload_file_async,
-                    printer.ip_address,
-                    printer.access_code,
-                    file_path,
-                    remote_path,
-                    socket_timeout=ftp_timeout,
-                    printer_model=printer.model,
-                    progress_callback=progress_bridge,
-                    respect_handshake_cooloff=False,
-                    failure=upload_failure,
-                    max_retries=ftp_retry_count,
-                    retry_delay=ftp_retry_delay,
-                    operation_name=f"Upload print to {printer.name}",
-                )
-            else:
-                uploaded = await upload_file_async(
-                    printer.ip_address,
-                    printer.access_code,
-                    file_path,
-                    remote_path,
-                    socket_timeout=ftp_timeout,
-                    printer_model=printer.model,
-                    progress_callback=progress_bridge,
-                    respect_handshake_cooloff=False,
-                    failure=upload_failure,
-                )
+            # The printer's MQTT goes quiet while it receives the file; the
+            # stale check must not reconnect it under the print command (#3538).
+            with printer_manager.uploading(item.printer_id):
+                if ftp_retry_enabled:
+                    uploaded = await with_ftp_retry(
+                        upload_file_async,
+                        printer.ip_address,
+                        printer.access_code,
+                        file_path,
+                        remote_path,
+                        socket_timeout=ftp_timeout,
+                        printer_model=printer.model,
+                        progress_callback=progress_bridge,
+                        respect_handshake_cooloff=False,
+                        failure=upload_failure,
+                        max_retries=ftp_retry_count,
+                        retry_delay=ftp_retry_delay,
+                        operation_name=f"Upload print to {printer.name}",
+                    )
+                else:
+                    uploaded = await upload_file_async(
+                        printer.ip_address,
+                        printer.access_code,
+                        file_path,
+                        remote_path,
+                        socket_timeout=ftp_timeout,
+                        printer_model=printer.model,
+                        progress_callback=progress_bridge,
+                        respect_handshake_cooloff=False,
+                        failure=upload_failure,
+                    )
         except UploadCancelled as e:
             uploaded = False
             upload_error = (

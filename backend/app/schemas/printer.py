@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 from urllib.parse import urlparse
 
 from pydantic import BaseModel, Field, field_serializer, field_validator, model_validator
@@ -139,6 +140,8 @@ class PrinterBase(BaseModel):
     external_camera_snapshot_url: str | None = None  # Optional single-frame override; #1177
     camera_rotation: int = 0  # 0, 90, 180, 270 degrees
     camera_light_auto: bool = False  # #1655, used when camera_light_mode is "selected"
+    # #2860: "inherit" follows the require_plate_clear setting, "on" / "off" decide for this printer.
+    plate_clear_override: Literal["inherit", "on", "off"] = "inherit"
 
 
 class PrinterCreate(PrinterBase):
@@ -181,12 +184,16 @@ class PrinterUpdate(IgnoresNullForRequiredColumns):
     print_hours_offset: float | None = None
     # Wear cost per printing hour (#694); null or 0 turns it off.
     wear_cost_per_hour: float | None = Field(default=None, ge=0, le=100000)
+    # Place in the pick order of "Any model" jobs when the order setting is "priority"
+    # (#2915); lowest first, null last.
+    dispatch_priority: int | None = Field(default=None, ge=0, le=100000)
     external_camera_url: str | None = None
     external_camera_type: str | None = None
     external_camera_enabled: bool | None = None
     external_camera_snapshot_url: str | None = None  # #1177
     camera_rotation: int | None = None  # 0, 90, 180, 270 degrees
     camera_light_auto: bool | None = None  # #1655
+    plate_clear_override: Literal["inherit", "on", "off"] | None = None  # #2860
     plate_detection_enabled: bool | None = None
     plate_detection_roi: PlateDetectionROI | None = None
     wled_config: WLEDConfig | None = None
@@ -204,6 +211,7 @@ class PrinterResponse(PrinterBase):
     supports_nozzle_flow_type: bool = True
     print_hours_offset: float = 0.0
     wear_cost_per_hour: float | None = None  # #694
+    dispatch_priority: int | None = None  # #2915
     external_camera_url: str | None = None
     external_camera_type: str | None = None
     external_camera_enabled: bool = False
